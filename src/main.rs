@@ -1,4 +1,3 @@
-use std::convert::Infallible;
 use std::net::SocketAddr;
 
 use http_body_util::Full;
@@ -8,8 +7,18 @@ use hyper::service::service_fn;
 use hyper::{Request, Response};
 use tokio::net::TcpListener;
 
-async fn hello(_: Request<hyper::body::Incoming>) -> Result<Response<Full<Bytes>>, Infallible> {
-    Ok(Response::new(Full::new(Bytes::from("Hello, World!"))))
+async fn hello(req: Request<hyper::body::Incoming>) -> Result<Response<Full<Bytes>>, String> {
+    
+    let client = reqwest::Client::new();
+    let res = client.get(format!("http://127.0.0.1:5000/{}",req.uri().path()))
+        .send()
+        .await.map_err(|e| e.to_string())?;
+    Ok(Response::builder()
+       .status(200)
+       .header("Content-Type", "application/json")
+       .body(Full::new(Bytes::from(res.text().await.map_err(|e| e.to_string())?)))
+       .unwrap()
+    )
 }
 
 #[tokio::main]
