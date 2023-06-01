@@ -7,10 +7,23 @@ use hyper::service::service_fn;
 use hyper::{Request, Response};
 use tokio::net::TcpListener;
 
+use toml::Table;
+
+lazy_static::lazy_static! {
+    static ref CONFIG: Table = {
+        std::fs::read_to_string("test/example.toml").unwrap().parse::<Table>().unwrap()
+    };
+}
+
 async fn hello(req: Request<hyper::body::Incoming>) -> Result<Response<Full<Bytes>>, String> {
     
     let client = reqwest::Client::new();
-    let res = client.get(format!("http://127.0.0.1:5000/{}",req.uri().path()))
+    let possible_nodes = CONFIG.get("nodes").unwrap().as_array().unwrap();
+    let res = client.get(format!(
+        "http://{}/{}",
+        possible_nodes[rand::random::<usize>() % possible_nodes.len()].as_str().unwrap(),
+        req.uri().path(),
+    ))
         .send()
         .await.map_err(|e| e.to_string())?;
     Ok(Response::builder()
@@ -45,3 +58,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         });
     }
 }
+
