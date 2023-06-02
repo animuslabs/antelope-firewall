@@ -1,2 +1,20 @@
-nodes = ["127.0.0.1:5000", "127.0.0.1:5001", "127.0.0.1:5002"]
+[[nodes]]
+name = "get_1"
+url = "http://127.0.0.1:5000"
+can_handle = [ "get" ]
+
+[[nodes]]
+name = "push_1"
+url = "http://127.0.0.1:5001"
+can_handle = [ "push" ]
+
+[[nodes]]
+name = "get_2"
+url = "http://127.0.0.1:5002"
+can_handle = [ "all" ]
+
+[[nodes]]
+name = "get_3"
+url = "http://127.0.0.1:5003"
+can_handle = [ "get_account" ]
 
