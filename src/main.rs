@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::net::{SocketAddr, IpAddr};
 use std::path::Path;
@@ -42,6 +43,8 @@ lazy_static::lazy_static! {
         });
         map
     };
+    
+    static ref LC_COUNTS: Mutex<HashMap<String, u64>> = Mutex::new(HashMap::new());
 }
 
 fn get_ratelimit_response(secs_in_window: u64) -> Response<BoxBody<Bytes, hyper::Error>> {
@@ -77,7 +80,6 @@ async fn handle_request(req: Request<hyper::body::Incoming>, ip: IpAddr) -> Resu
                 if !limiter.check_ip_passes(&ip) {
                     return Ok(get_ratelimit_response(limiter.window_duration));
                 };
-                drop(limiter);
             }
 
             let possible_nodes: Vec<(u64, String)> = ROUTER.get_nodes_for_path(parts.uri.path());
@@ -104,18 +106,30 @@ async fn handle_request(req: Request<hyper::body::Incoming>, ip: IpAddr) -> Resu
                     }).into_inner().1
                 },
                 RoutingMode::Random => {
-                    let (weights, urls): (Vec<u64>, Vec<String>) = possible_nodes.iter().cloned().unzip();
+                    let (weights, urls): (Vec<u64>, Vec<String>) = possible_nodes.into_iter().unzip();
                     let dist = WeightedIndex::new(weights).unwrap();
                     urls[dist.sample(&mut rand::thread_rng())].clone()
                 },
                 RoutingMode::LeastConnections => {
-                    "".into()
+                    let mut lc_counts = LC_COUNTS.lock().await;
+                    possible_nodes.into_iter()
+                        .map(|(weight, url)| (*lc_counts.entry(url.clone()).or_insert(0) as f32 / weight as f32, url))
+                        .min_by(|(weight1, _), (weight2, _)| weight1.partial_cmp(weight2).unwrap_or(Ordering::Equal))
+                        .expect("There were no possible nodes even though it was checked earlier")
+                        .1
                 }
             };
 
             let client = reqwest::Client::new();
 
             let body_bytes = body.collect().await?.to_bytes();
+
+            if ROUTER.routing_mode == RoutingMode::LeastConnections {
+                let mut lc_counts = LC_COUNTS.lock().await;
+                lc_counts.entry(matched_node_url.clone())
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
 
             println!("Sending request to node: {}", matched_node_url);
             let node_res = client.post(format!(
@@ -126,12 +140,18 @@ async fn handle_request(req: Request<hyper::body::Incoming>, ip: IpAddr) -> Resu
                 .send()
                 .await.unwrap();
 
+            if ROUTER.routing_mode == RoutingMode::LeastConnections {
+                let mut lc_counts = LC_COUNTS.lock().await;
+                lc_counts.entry(matched_node_url.clone())
+                    .and_modify(|e| *e = e.checked_sub(1).unwrap_or(0))
+                    .or_insert(0);
+            }
+
             // Update failure rate limiter.
             if let Some(limiter_mutex) = FAILURE_RATELIMITER.as_ref() {
                 if node_res.status().is_client_error() || node_res.status().is_server_error() {
                     let mut limiter = limiter_mutex.lock().await;
                     limiter.increment_count(ip);
-                    drop(limiter);
                 }
             }
 

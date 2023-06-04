@@ -136,7 +136,7 @@ pub struct SlidingWindowParams {
     pub allowed_per_window: u64,
 }
 
-#[derive(Deserialize, Debug, Clone, Copy)]
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoutingMode {
     #[serde(rename = "round_robin")]
     RoundRobin,
