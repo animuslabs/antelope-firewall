@@ -1,9 +1,20 @@
-use std::collections::{HashMap, HashSet};
+use std::{collections::{HashMap, HashSet}, path::Path};
+use thiserror::Error;
 
 use lazy_static::lazy_static;
 use serde::Deserialize;
 
 lazy_static! {
+    pub static ref ENDPOINTS: HashSet<String> = [
+        "/get_account", "/get_block", "/get_block_info", "/get_info", "/push_transaction",
+        "/send_transaction", "/push_transactions", "/get_block_header_state", "/get_abi",
+        "/get_currency_balance", "/get_currency_stats", "/get_required_keys", "/get_producers",
+        "/get_raw_code_and_abi", "/get_scheduled_transaction", "/get_table_by_scope",
+        "/get_table_rows", "/get_kv_table_rows", "/abi_json_to_bin", "/abi_bin_to_json",
+        "/get_code", "/get_raw_abi", "/get_activated_protocol_features",
+        "/get_accounts_by_authorizers"
+    ].iter().map(|s| s.to_string()).collect();
+    
     pub static ref PATHS_MAP: HashMap<String, HashSet<String>> = {
         let all: HashSet<String> = [
             "get_account", "get_block", "get_block_info", "get_info", "push_transaction",
@@ -42,42 +53,103 @@ lazy_static! {
     };
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Router {
-    pub nodes: Vec<(String, HashSet<String>)>,
+    pub nodes: Vec<(String, Option<u64>, HashSet<String>)>,
+    pub routing_mode: RoutingMode,
+    pub port: u16,
 }
 
 impl Router {
-    pub fn new() -> Self {
-        let config: Config = toml::from_str(&std::fs::read_to_string("test/example.toml").unwrap()).unwrap();
+    /// Panics if a node has an invalid endpoint group. Check before calling
+    pub fn from_config(config: &Config) -> Self {
         Router {
-            nodes: config.nodes.into_iter().map(|n| (
-                n.url.clone(), n.can_handle.into_iter().fold(HashSet::new(), |mut acc, keyword| {
-                    acc.extend(PATHS_MAP.get(&keyword).unwrap().clone());
+            routing_mode: config.routing_mode,
+            nodes: config.nodes.iter().map(|n| (
+                n.url.clone(), n.routing_weight, n.can_handle.iter().fold(HashSet::new(), |mut acc, keyword| {
+                    acc.extend(PATHS_MAP.get(keyword).unwrap().clone());
                     acc
                 })
             )).collect(),
+            port: config.port
         }
     }
-    pub fn get_nodes_for_path(&self, path: &str) -> Vec<String> {
+    pub fn get_nodes_for_path(&self, path: &str) -> Vec<(u64, String)> {
         let mut matching_nodes = vec!();
-        self.nodes.iter().for_each(|(node_url, accepts_paths)| {
+        self.nodes.iter().for_each(|(node_url, routing_weight, accepts_paths)| {
             if accepts_paths.contains(&path[1..]) {
-                matching_nodes.push(node_url.clone());
+                matching_nodes.push((routing_weight.unwrap_or(1), node_url.clone()));
             }
         });
         matching_nodes
     }
 }
 
-#[derive(Deserialize)]
-pub struct Config {
-    nodes: Vec<Node>,
+#[derive(Error, Debug, Clone)]
+pub enum ParseConfigError {
+    #[error("Failed to parse config file, received error: `{0}`")]
+    InvalidFormat(String),
+    #[error("Couldn't read config file, received error: `{0}`")]
+    CouldntReadFile(String),
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone, Debug)]
+pub struct Config {
+    pub nodes: Vec<Node>,
+    pub routing_mode: RoutingMode,
+    pub port: u16,
+    pub base_ip_ratelimit_config: Option<SlidingWindowParams>,
+    pub failure_ratelimit_config: Option<SlidingWindowParams>,
+}
+
+pub fn parse_config_from_file(path: &Path) -> Result<(Router, Config), ParseConfigError> {
+    let raw_config: Config = toml::from_str(
+        &std::fs::read_to_string(path)
+            .map_err(|e| ParseConfigError::CouldntReadFile(e.to_string()))?
+    ).map_err(|e| ParseConfigError::InvalidFormat(e.to_string()))?;
+
+    // Check to see if config says a node can handle an invalid endpoint group
+    match raw_config.nodes.iter()
+        .find_map(|node| node.can_handle.iter()
+            .find_map(|endpoint| 
+                if !PATHS_MAP.contains_key(endpoint) {
+                    Some(ParseConfigError::InvalidFormat(
+                        format!("{} is an invalid endpoint or endpoint group.", endpoint)
+                    ))
+                } else {
+                    None
+                }
+            )
+        ) {
+        Some(e) => {
+            Err(e)
+        },
+        None => {
+            Ok((Router::from_config(&raw_config), raw_config))
+        },
+    }
+}
+
+#[derive(Deserialize, Debug, Clone, Copy)]
+pub struct SlidingWindowParams {
+    pub secs_in_window: u64,
+    pub allowed_per_window: u64,
+}
+
+#[derive(Deserialize, Debug, Clone, Copy)]
+pub enum RoutingMode {
+    #[serde(rename = "round_robin")]
+    RoundRobin,
+    #[serde(rename = "least_connections")]
+    LeastConnections,
+    #[serde(rename = "random")]
+    Random,
+}
+
+#[derive(Deserialize, Debug, Clone)]
 pub struct Node {
     name: String,
     url: String,
     can_handle: Vec<String>,
+    routing_weight: Option<u64>,
 }
