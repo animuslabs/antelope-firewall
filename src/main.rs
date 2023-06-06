@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::net::{SocketAddr, IpAddr};
 use std::path::Path;
 
+use healthcheck::start_healthcheck;
 use http_body_util::{Full, BodyExt};
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
@@ -16,6 +17,8 @@ use tokio::net::TcpListener;
 
 mod router;
 mod ratelimit;
+mod healthcheck;
+mod api_responses;
 
 use router::*;
 use tokio::sync::Mutex;
@@ -82,10 +85,12 @@ async fn handle_request(req: Request<hyper::body::Incoming>, ip: IpAddr) -> Resu
                 };
             }
 
-            let possible_nodes: Vec<(u64, String)> = ROUTER.get_nodes_for_path(parts.uri.path());
+            let possible_nodes: Vec<(u64, String)> = ROUTER.get_nodes_for_path(parts.uri.path()).await;
             if possible_nodes.len() == 0 {
                 println!("No nodes available for {}", parts.uri.path());
-                return Ok(Response::new(full("No nodes available for this path")));
+                return Ok(Response::builder()
+                    .status(500)
+                    .body(full("No nodes available for this path")).unwrap());
             }
 
             let matched_node_url = match ROUTER.routing_mode {
@@ -132,6 +137,8 @@ async fn handle_request(req: Request<hyper::body::Incoming>, ip: IpAddr) -> Resu
             }
 
             println!("Sending request to node: {}", matched_node_url);
+            // TODO: Add header that includes the src ip so nodes know who
+            // made the request
             let node_res = client.post(format!(
                 "{}/{}", matched_node_url, parts.uri.path(),
             ))
@@ -171,6 +178,7 @@ async fn handle_request(req: Request<hyper::body::Incoming>, ip: IpAddr) -> Resu
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr = SocketAddr::from(([127, 0, 0, 1], ROUTER.port));
 
+    tokio::task::spawn(start_healthcheck(ROUTER.nodes.iter().map(|(url, _, _)| url.clone()).collect()));
     // We create a TcpListener and bind it to 127.0.0.1:3000
     let listener = TcpListener::bind(addr).await?;
 

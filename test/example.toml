@@ -1,9 +1,12 @@
-routing_mode = "least_connections"
+routing_mode = "round_robin"
 port = 3000
+
+healthcheck_interval = 15
+healthcheck_time_to_invalid = 5
 
 [base_ip_ratelimit_config]
 secs_in_window = 60
-allowed_per_window = 100
+allowed_per_window = 50
 
 [failure_ratelimit_config]
 secs_in_window = 60

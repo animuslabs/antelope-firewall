@@ -4,7 +4,10 @@ use thiserror::Error;
 use lazy_static::lazy_static;
 use serde::Deserialize;
 
+use crate::healthcheck::HEALTHY_MAP;
+
 lazy_static! {
+    // TODO: Add hyperion
     pub static ref ENDPOINTS: HashSet<String> = [
         "/get_account", "/get_block", "/get_block_info", "/get_info", "/push_transaction",
         "/send_transaction", "/push_transactions", "/get_block_header_state", "/get_abi",
@@ -55,7 +58,7 @@ lazy_static! {
 
 #[derive(Debug, Clone)]
 pub struct Router {
-    pub nodes: Vec<(String, Option<u64>, HashSet<String>)>,
+    pub nodes: Vec<(String, u64, HashSet<String>)>,
     pub routing_mode: RoutingMode,
     pub port: u16,
 }
@@ -66,7 +69,7 @@ impl Router {
         Router {
             routing_mode: config.routing_mode,
             nodes: config.nodes.iter().map(|n| (
-                n.url.clone(), n.routing_weight, n.can_handle.iter().fold(HashSet::new(), |mut acc, keyword| {
+                n.url.clone(), n.routing_weight.unwrap_or(1), n.can_handle.iter().fold(HashSet::new(), |mut acc, keyword| {
                     acc.extend(PATHS_MAP.get(keyword).unwrap().clone());
                     acc
                 })
@@ -74,11 +77,12 @@ impl Router {
             port: config.port
         }
     }
-    pub fn get_nodes_for_path(&self, path: &str) -> Vec<(u64, String)> {
+    pub async fn get_nodes_for_path(&self, path: &str) -> Vec<(u64, String)> {
+        let x = HEALTHY_MAP.lock().await;
         let mut matching_nodes = vec!();
         self.nodes.iter().for_each(|(node_url, routing_weight, accepts_paths)| {
-            if accepts_paths.contains(&path[1..]) {
-                matching_nodes.push((routing_weight.unwrap_or(1), node_url.clone()));
+            if accepts_paths.contains(&path[1..]) && *x.get(node_url).unwrap_or(&false) {
+                matching_nodes.push((*routing_weight, node_url.clone()));
             }
         });
         matching_nodes
@@ -98,6 +102,8 @@ pub struct Config {
     pub nodes: Vec<Node>,
     pub routing_mode: RoutingMode,
     pub port: u16,
+    pub healthcheck_interval: u64,
+    pub healthcheck_time_to_invalid: u64,
     pub base_ip_ratelimit_config: Option<SlidingWindowParams>,
     pub failure_ratelimit_config: Option<SlidingWindowParams>,
 }

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, time::{Duration, SystemTime, UNIX_EPOCH}, sync::Arc, mem, net::IpAddr};
+use std::{collections::HashMap, time::{Duration, SystemTime, UNIX_EPOCH}, sync::Arc, net::IpAddr};
 
 pub struct SlidingWindow {
     pub window_duration: u64,
