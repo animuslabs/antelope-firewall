@@ -10,6 +10,7 @@ use hyper::body::Bytes;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, Method};
+use prometheus::start_prometheus_exporter;
 use rand::distributions::WeightedIndex;
 use rand::prelude::Distribution;
 use ratelimit::SlidingWindow;
@@ -19,12 +20,15 @@ mod router;
 mod ratelimit;
 mod healthcheck;
 mod api_responses;
+mod prometheus;
 
 use router::*;
 use tokio::sync::Mutex;
 
 use itertools::Itertools;
 use itertools::FoldWhile::{Continue, Done};
+
+use crate::prometheus::{REQUESTS_RECEIVED, REQUESTS_RATELIMITED_GENERAL, REQUESTS_RATELIMITED_FAILURE, ERROR_NODE_RESPONSES, SUCCESS_NODE_RESPONSES, REQUESTS_FAILED_TO_ROUTE};
 
 lazy_static::lazy_static! {
     static ref _CONFIG_TUPL: (Router, Config) = parse_config_from_file(Path::new("test/example.toml")).unwrap();
@@ -69,11 +73,13 @@ async fn handle_request(req: Request<hyper::body::Incoming>, ip: IpAddr) -> Resu
         &Method::POST => {
             let (parts, body) = req.into_parts();
             println!("Handling request: {}", parts.uri.path());
+            REQUESTS_RECEIVED.inc();
 
             // Handle Ratelimiters
             if let Some(limiter_mutex) = IP_RATELIMITER.as_ref() {
                 let mut limiter = limiter_mutex.lock().await;
                 if !limiter.check_and_increment(ip) {
+                    REQUESTS_RATELIMITED_GENERAL.inc();
                     return Ok(get_ratelimit_response(limiter.window_duration));
                 };
             }
@@ -81,6 +87,7 @@ async fn handle_request(req: Request<hyper::body::Incoming>, ip: IpAddr) -> Resu
             if let Some(limiter_mutex) = FAILURE_RATELIMITER.as_ref() {
                 let mut limiter = limiter_mutex.lock().await;
                 if !limiter.check_ip_passes(&ip) {
+                    REQUESTS_RATELIMITED_FAILURE.inc();
                     return Ok(get_ratelimit_response(limiter.window_duration));
                 };
             }
@@ -88,6 +95,7 @@ async fn handle_request(req: Request<hyper::body::Incoming>, ip: IpAddr) -> Resu
             let possible_nodes: Vec<(u64, String)> = ROUTER.get_nodes_for_path(parts.uri.path()).await;
             if possible_nodes.len() == 0 {
                 println!("No nodes available for {}", parts.uri.path());
+                REQUESTS_FAILED_TO_ROUTE.inc();
                 return Ok(Response::builder()
                     .status(500)
                     .body(full("No nodes available for this path")).unwrap());
@@ -157,6 +165,7 @@ async fn handle_request(req: Request<hyper::body::Incoming>, ip: IpAddr) -> Resu
             // Update failure rate limiter.
             if let Some(limiter_mutex) = FAILURE_RATELIMITER.as_ref() {
                 if node_res.status().is_client_error() || node_res.status().is_server_error() {
+                    ERROR_NODE_RESPONSES.inc();
                     let mut limiter = limiter_mutex.lock().await;
                     limiter.increment_count(ip);
                 }
@@ -166,7 +175,9 @@ async fn handle_request(req: Request<hyper::body::Incoming>, ip: IpAddr) -> Resu
                 .status(node_res.status());
 
             client_res.headers_mut().map(|h| h.clone_from(node_res.headers()));
-            Ok(client_res.body(full(node_res.bytes().await.unwrap())).unwrap())
+            let final_response = client_res.body(full(node_res.bytes().await.unwrap())).unwrap();
+            SUCCESS_NODE_RESPONSES.inc();
+            Ok(final_response)
         },
         _ => {
             Ok(Response::new(full("Invalid Method")))
@@ -179,6 +190,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr = SocketAddr::from(([127, 0, 0, 1], ROUTER.port));
 
     tokio::task::spawn(start_healthcheck(ROUTER.nodes.iter().map(|(url, _, _)| url.clone()).collect()));
+    start_prometheus_exporter();
     // We create a TcpListener and bind it to 127.0.0.1:3000
     let listener = TcpListener::bind(addr).await?;
 
