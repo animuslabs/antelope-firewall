@@ -102,6 +102,7 @@ pub struct Config {
     pub nodes: Vec<Node>,
     pub routing_mode: RoutingMode,
     pub port: u16,
+    pub prometheus_port: Option<u16>,
     pub healthcheck_interval: u64,
     pub healthcheck_time_to_invalid: u64,
     pub base_ip_ratelimit_config: Option<SlidingWindowParams>,
@@ -116,16 +117,25 @@ pub fn parse_config_from_file(path: &Path) -> Result<(Router, Config), ParseConf
 
     // Check to see if config says a node can handle an invalid endpoint group
     match raw_config.nodes.iter()
-        .find_map(|node| node.can_handle.iter()
-            .find_map(|endpoint| 
-                if !PATHS_MAP.contains_key(endpoint) {
-                    Some(ParseConfigError::InvalidFormat(
-                        format!("{} is an invalid endpoint or endpoint group.", endpoint)
-                    ))
-                } else {
-                    None
+        .find_map(|node| {
+                if let Some(w) = node.routing_weight {
+                    if w == 0 {
+                        return Some(ParseConfigError::InvalidFormat(
+                            format!("Node {} has a routing weight of 0, which is invalid.", node.name)
+                        ));
+                    }
                 }
-            )
+                node.can_handle.iter()
+                    .find_map(|endpoint|
+                        if !PATHS_MAP.contains_key(endpoint) {
+                            Some(ParseConfigError::InvalidFormat(
+                                format!("{} is an invalid endpoint or endpoint group.", endpoint)
+                            ))
+                        } else {
+                            None
+                        }
+                    )
+            }
         ) {
         Some(e) => {
             Err(e)

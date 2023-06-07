@@ -3,6 +3,9 @@ use std::collections::HashMap;
 use std::net::{SocketAddr, IpAddr};
 use std::path::Path;
 
+
+use clap::Parser;
+use command_line::Args;
 use healthcheck::start_healthcheck;
 use http_body_util::{Full, BodyExt};
 use http_body_util::combinators::BoxBody;
@@ -21,6 +24,7 @@ mod ratelimit;
 mod healthcheck;
 mod api_responses;
 mod prometheus;
+mod command_line;
 
 use router::*;
 use tokio::sync::Mutex;
@@ -31,7 +35,8 @@ use itertools::FoldWhile::{Continue, Done};
 use crate::prometheus::{REQUESTS_RECEIVED, REQUESTS_RATELIMITED_GENERAL, REQUESTS_RATELIMITED_FAILURE, ERROR_NODE_RESPONSES, SUCCESS_NODE_RESPONSES, REQUESTS_FAILED_TO_ROUTE};
 
 lazy_static::lazy_static! {
-    static ref _CONFIG_TUPL: (Router, Config) = parse_config_from_file(Path::new("test/example.toml")).unwrap();
+    static ref ARGS: Args = Args::parse();
+    static ref _CONFIG_TUPL: (Router, Config) = parse_config_from_file(Path::new(&ARGS.config)).unwrap();
     static ref CONFIG: Config = _CONFIG_TUPL.1.clone();
     static ref ROUTER: Router = _CONFIG_TUPL.0.clone();
 
@@ -187,10 +192,15 @@ async fn handle_request(req: Request<hyper::body::Incoming>, ip: IpAddr) -> Resu
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+
     let addr = SocketAddr::from(([127, 0, 0, 1], ROUTER.port));
 
     tokio::task::spawn(start_healthcheck(ROUTER.nodes.iter().map(|(url, _, _)| url.clone()).collect()));
-    start_prometheus_exporter();
+
+    if let Some(port) = CONFIG.prometheus_port {
+        start_prometheus_exporter(port)?;
+    }
+
     // We create a TcpListener and bind it to 127.0.0.1:3000
     let listener = TcpListener::bind(addr).await?;
 

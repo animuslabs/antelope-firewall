@@ -1,3 +1,5 @@
+use std::net::{Ipv4Addr, SocketAddr};
+
 use lazy_static::lazy_static;
 use prometheus_exporter::prometheus::{register_counter, core::{GenericCounter, AtomicF64}};
 
@@ -10,10 +12,12 @@ lazy_static! {
     pub static ref SUCCESS_NODE_RESPONSES: GenericCounter<AtomicF64> = register_counter!("node_responses_success", "Node responses that returned success").unwrap();
 }
 
-pub fn start_prometheus_exporter() {
-    let mut builder = prometheus_exporter::Builder::new("127.0.0.1:9184".parse().unwrap());
+pub fn start_prometheus_exporter(port: u16) -> Result<(), String> {
+    let mut builder = prometheus_exporter::Builder::new(SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), port));
     builder
         .with_endpoint("metrics")
-        .unwrap();
-    builder.start().unwrap();
+        .map_err(|e| e.to_string())?;
+    builder.start()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }

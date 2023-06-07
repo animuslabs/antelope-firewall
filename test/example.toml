@@ -1,5 +1,6 @@
 routing_mode = "round_robin"
 port = 3000
+prometheus_port = 3001
 
 healthcheck_interval = 15
 healthcheck_time_to_invalid = 5
