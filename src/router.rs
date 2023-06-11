@@ -105,8 +105,7 @@ pub struct Config {
     pub prometheus_port: Option<u16>,
     pub healthcheck_interval: u64,
     pub healthcheck_time_to_invalid: u64,
-    pub base_ip_ratelimit_config: Option<SlidingWindowParams>,
-    pub failure_ratelimit_config: Option<SlidingWindowParams>,
+    pub ratelimiters: Vec<RateLimiterParams>,
 }
 
 pub fn parse_config_from_file(path: &Path) -> Result<(Router, Config), ParseConfigError> {
@@ -147,7 +146,7 @@ pub fn parse_config_from_file(path: &Path) -> Result<(Router, Config), ParseConf
 }
 
 #[derive(Deserialize, Debug, Clone, Copy)]
-pub struct SlidingWindowParams {
+pub struct RateLimiterParams {
     pub secs_in_window: u64,
     pub allowed_per_window: u64,
 }

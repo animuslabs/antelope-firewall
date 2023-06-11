@@ -5,13 +5,29 @@ prometheus_port = 3001
 healthcheck_interval = 15
 healthcheck_time_to_invalid = 5
 
-[base_ip_ratelimit_config]
-secs_in_window = 60
-allowed_per_window = 50
+[[endpoint_groups]]
+includes = ["group:endpoints", ""]
 
-[failure_ratelimit_config]
-secs_in_window = 60
-allowed_per_window = 5
+[[block_txns]]
+name = "banned_contracts"
+should_drop = "data[tx.contract]"
+cache_interval = "10"
+data_url = "http://127.0.0.1:6000/banned_contracts.json"
+
+[[ratelimiters]]
+name = "base"
+filter = ["endpoint=/push_transactions", ""]
+bucket = ["ip"]
+increment_on = "request"
+max_allowed = { type = "fetch_map", url = "http://127.0.0.1/paid", default = "" }
+window_duration = "10"
+
+[[ratelimiters]]
+name = "failure"
+get_bucket = "req.ip"
+increment_on = "failure"
+max_allowed = { type = "const", value = "10" }
+window_duration = "10"
 
 [[nodes]]
 name = "get_1"

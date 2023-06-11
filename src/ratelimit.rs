@@ -46,7 +46,6 @@ impl SlidingWindow {
         }
     }
 
-
     /// Updates current window and current/last ip counts if needed. Returns
     /// whether or not the packet should pass with the rate limiter policy
     pub fn check_ip_passes(&mut self, ip: &IpAddr) -> bool {
