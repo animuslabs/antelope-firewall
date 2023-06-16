@@ -1,0 +1,8 @@
+[package]
+name = "antelope-firewall"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+antelope-firewall-lib = { path = "../antelope-firewall-lib/" }
+tokio = { version = "1.28.2", features = ["full"] }

@@ -31,6 +31,18 @@ pub enum RoutingModeState {
     Random
 }
 
+impl RoutingModeState {
+    pub fn base_round_robin() -> Self {
+        RoutingModeState::RoundRobin(HashMap::new())
+    }
+    pub fn base_least_connected() -> Self {
+        RoutingModeState::LeastConnected(HashMap::new())
+    }
+    pub fn base_random() -> Self {
+        RoutingModeState::Random
+    }
+}
+
 pub struct AntelopeFirewall {
     filters: Vec<Filter>,
     ratelimiters: Vec<Mutex<RateLimiter<String>>>,
