@@ -7,6 +7,7 @@ pub struct JsonDataCache {
     pub data: Arc<RwLock<(serde_json::Value, JsonDataCacheStatus)>>,
 }
 
+#[derive(Debug, Clone)]
 pub enum JsonDataCacheStatus {
     Ok,
     Uninitialized,

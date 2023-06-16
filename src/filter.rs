@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use hyper::http::request::Parts;
 use serde_json::Value;
 
 use crate::{json_data_cache::{JsonDataCache, JsonDataCacheStatus}, FilterFn, RequestInfo};
@@ -27,14 +26,14 @@ impl Filter {
     }
 
     /// Checks if the request should be filtered out
-    pub async fn should_request_pass(&self, request_info: &RequestInfo, value: &Value) -> bool {
+    pub async fn should_request_pass(&self, request_info: Arc<RequestInfo>, value: Arc<Value>) -> bool {
         match self.cache {
             Some(ref cache) => {
                 let data = cache.data.read().await;
-                let (json, status) = &*data;
+                let (json, status) = (*data).clone();
                 match status {
                     JsonDataCacheStatus::Ok => {
-                        return (self.should_request_pass)((request_info, value, json));
+                        return (self.should_request_pass)((request_info, value, Arc::new(json))).await;
                     },
                     _ => {
                         return false;
@@ -42,7 +41,7 @@ impl Filter {
                 }
             },
             None => {
-                return (self.should_request_pass)((request_info, value, &Value::Null));
+                return (self.should_request_pass)((request_info, value, Arc::new(Value::Null))).await;
             }
         }
     }

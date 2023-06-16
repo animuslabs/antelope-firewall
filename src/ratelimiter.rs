@@ -1,19 +1,23 @@
 use std::{collections::HashMap, hash::Hash, sync::Arc, time::{SystemTime, UNIX_EPOCH, Duration}};
 use serde_json::Value;
 
-use hyper::http::request::Parts;
-
 use crate::{FilterFn, json_data_cache::{JsonDataCache, JsonDataCacheStatus}, MapFn, RequestInfo};
 
+pub enum IncrementMode {
+    Before,
+    After
+}
 
 /// RateLimiter is a struct that will be used to limit the rate of requests.
 /// We use the SlidingWindow technique, where we maintain two buckets
 pub struct RateLimiter<T> {
-    name: String,
+    pub name: String,
 
     should_be_limited: Box<FilterFn>,
     get_bucket: Box<MapFn<Option<T>>>,
     get_ratelimit: Box<MapFn<u64>>,
+
+    pub increment_mode: IncrementMode,
 
     cache: Option<Arc<JsonDataCache>>,
 
@@ -30,6 +34,7 @@ impl<T: Eq + Hash> RateLimiter<T> {
         should_be_limited: Box<FilterFn>,
         get_bucket: Box<MapFn<Option<T>>>,
         get_ratelimit: Box<MapFn<u64>>,
+        increment_mode: IncrementMode,
         cache: Option<Arc<JsonDataCache>>,
         window_duration: u64,
     ) -> Self {
@@ -38,6 +43,7 @@ impl<T: Eq + Hash> RateLimiter<T> {
             should_be_limited,
             get_bucket,
             get_ratelimit,
+            increment_mode,
             cache,
             window_duration,
             current_window: 0,
@@ -77,16 +83,16 @@ impl<T: Eq + Hash> RateLimiter<T> {
         }
     }
 
-    pub async fn should_request_pass(&mut self, request_info: &RequestInfo, value: &Value) -> bool {
+    pub async fn should_request_pass(&mut self, request_info: Arc<RequestInfo>, value: Arc<Value>) -> bool {
         self.update_current_window();
 
         let (bucket, rate_limit) = match self.cache {
             Some(ref cache) => {
                 let data = cache.data.read().await;
-                let (json, status) = &*data;
+                let (json, status) = (*data).clone();
                 match status {
                     JsonDataCacheStatus::Ok => {
-                        self.get_parameters(request_info, value, json)
+                        self.get_parameters(request_info, value, Arc::new(json)).await
                     },
                     _ => {
                         return false;
@@ -94,7 +100,7 @@ impl<T: Eq + Hash> RateLimiter<T> {
                 }
             },
             None => {
-                self.get_parameters(request_info, value, &Value::Null)
+                self.get_parameters(request_info, value, Arc::new(Value::Null)).await
             }
         };
         
@@ -118,9 +124,9 @@ impl<T: Eq + Hash> RateLimiter<T> {
 
     // TODO: Add increment functions
 
-    fn get_parameters(&self, request_info: &RequestInfo, value: &Value, data: &Value) -> (Option<T>, u64) {
-        let bucket = (self.get_bucket)((request_info, value, data));
-        let rate_limit = (self.get_ratelimit)((request_info, value, data));
+    async fn get_parameters(&self, request_info: Arc<RequestInfo>, value: Arc<Value>, data: Arc<Value>) -> (Option<T>, u64) {
+        let bucket = (self.get_bucket)((Arc::clone(&request_info), Arc::clone(&value), Arc::clone(&data))).await;
+        let rate_limit = (self.get_ratelimit)((request_info, value, data)).await;
         (bucket, rate_limit)
     }
 }
