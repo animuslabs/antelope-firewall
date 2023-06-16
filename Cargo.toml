@@ -1,27 +1,6 @@
-[package]
-name = "antelope-firewall"
-version = "0.1.0"
-edition = "2021"
+[workspace]
 
-[dependencies]
-hyper = { version = "1.0.0-rc.3", features = ["full", "client"] }
-tokio = { version = "1", features = ["full"] }
-http-body-util = "0.1.0-rc.2" 
-reqwest = { version = "0.11.18", features = ["json"] }
-lazy_static = "1.4.0"
-toml = "0.7.4"
-rand = "0.8.5"
-serde = { version = "1.0.163", features = ["derive"] }
-itertools = "0.10.5"
-thiserror = "1.0.40"
-chrono = { version = "0.4.26", features = ["serde"] }
-serde_json = "1.0.96"
-prometheus_exporter = "0.8.5"
-clap = { version = "4.3.2", features = ["derive"] }
-
-[lib]
-name = "antelope_firewall"
-path = "src/lib.rs"
-edition = "2021"
-crate-type = ["lib"]
-
+members = [
+    "antelope-firewall",
+    "antelope-firewall-lib",
+]
