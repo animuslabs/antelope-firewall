@@ -1,5 +1,11 @@
 # antelope-firewall Milestone 1
 
+## Building
+### Dependencies
+`sudo apt install openssl libssl-dev`
+### Build
+`cargo build`
+
 ## Running
 
 We are not providing prebuilt binaries for this project for milestone 1.
