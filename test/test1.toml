@@ -1,0 +1,53 @@
+routing_mode = "round_robin"
+port = 3000
+prometheus_port = 3001
+
+healthcheck_interval = 15
+healthcheck_time_to_invalid = 5
+
+[[endpoint_groups]]
+includes = ["group:endpoints", ""]
+
+[[block_txns]]
+name = "banned_contracts"
+should_drop = "data[tx.contract]"
+cache_interval = "10"
+data_url = "http://127.0.0.1:6000/banned_contracts.json"
+
+[[ratelimiters]]
+name = "base"
+filter = ["endpoint=/push_transactions", ""]
+bucket = ["ip"]
+increment_on = "request"
+max_allowed = { type = "fetch_map", url = "http://127.0.0.1/paid", default = "" }
+window_duration = "10"
+
+[[ratelimiters]]
+name = "failure"
+get_bucket = "req.ip"
+increment_on = "failure"
+max_allowed = { type = "const", value = "10" }
+window_duration = "10"
+
+[[nodes]]
+name = "get_1"
+url = "http://127.0.0.1:5000"
+can_handle = [ "get" ]
+routing_weight = 2
+
+[[nodes]]
+name = "push_1"
+url = "http://127.0.0.1:5001"
+can_handle = [ "push" ]
+
+[[nodes]]
+name = "get_2"
+url = "http://127.0.0.1:5002"
+can_handle = [ "all" ]
+routing_weight = 5
+
+[[nodes]]
+name = "get_3"
+url = "http://127.0.0.1:5003"
+can_handle = [ "get_account" ]
+
