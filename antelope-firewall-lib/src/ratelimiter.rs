@@ -92,7 +92,11 @@ impl<T: Eq + Hash> RateLimiter<T> {
                 let (json, status) = (*data).clone();
                 match status {
                     JsonDataCacheStatus::Ok => {
-                        self.get_parameters(request_info, value, Arc::new(json)).await
+                        if (self.should_be_limited)((Arc::clone(&request_info), Arc::clone(&value), Arc::new(json.clone()))).await {
+                            self.get_parameters(request_info, value, Arc::new(json)).await
+                        } else {
+                            return false;
+                        }
                     },
                     _ => {
                         return false;
@@ -100,7 +104,11 @@ impl<T: Eq + Hash> RateLimiter<T> {
                 }
             },
             None => {
-                self.get_parameters(request_info, value, Arc::new(Value::Null)).await
+                if (self.should_be_limited)((Arc::clone(&request_info), Arc::clone(&value), Arc::new(Value::Null))).await {
+                    self.get_parameters(request_info, value, Arc::new(Value::Null)).await
+                } else {
+                    return false;
+                }
             }
         };
         

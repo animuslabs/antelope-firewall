@@ -17,9 +17,9 @@ use crate::util::{get_blocked_response, get_ratelimit_response, get_error_respon
 use crate::{filter::Filter, ratelimiter::RateLimiter};
 
 use hyper::server::conn::http1;
-use hyper::{Request, Response};
+use hyper::{Request, Response, Method};
 use hyper::service::service_fn;
-use hyper::body::Bytes;
+use hyper::body::{Bytes, Body};
 
 use http_body_util::combinators::BoxBody;
 use http_body_util::BodyExt;
@@ -116,13 +116,26 @@ impl AntelopeFirewall {
     async fn handle_request(&self, req: Request<hyper::body::Incoming>, ip: IpAddr) -> Result<Response<BoxBody<Bytes, hyper::Error>>, AntelopeFirewallError> {
         // Parse thr request, try to put body into JSON
         let (parts, body) = req.into_parts();
+
+        // Check size hint, return 413 error if too big
+        let max = body.size_hint().upper().unwrap_or(u64::MAX);
+        // TODO: make this configurable
+        if max > 1024 * 64 {
+            let mut resp = Response::new(full("Body too big"));
+            *resp.status_mut() = hyper::StatusCode::PAYLOAD_TOO_LARGE;
+            return Ok(resp);
+        }
+
         let request_info = Arc::new(RequestInfo::new(parts.headers.clone(), parts.uri, ip));
-        let body_bytes = body.collect().await
-            .map_err(|e| ParseBodyFailed(e.to_string()))?
-            .to_bytes();
+        let body_bytes = match parts.method {
+            Method::POST => body.collect().await
+                .map_err(|e| ParseBodyFailed(e.to_string()))?
+                .to_bytes(),
+            _ => Bytes::new(),
+        };
         let body_json = Arc::new(serde_json::from_slice::<serde_json::Value>(&body_bytes)
             .map_err(|e| ParseBodyFailed(e.to_string()))?);
-
+        
         // Check if the request should be filtered out
         for filter in &self.filters {
             if !filter.should_request_pass(Arc::clone(&request_info), Arc::clone(&body_json)).await {
