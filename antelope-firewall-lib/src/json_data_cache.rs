@@ -13,7 +13,7 @@ pub enum JsonDataCacheStatus {
     Ok,
     Uninitialized,
     UnableToFetch(String),
-    InvalidResponse(String)
+    InvalidResponse(String),
 }
 
 impl JsonDataCache {
@@ -21,12 +21,13 @@ impl JsonDataCache {
     pub fn new(url: Url, mut interval: Interval) -> Self {
         let cache = JsonDataCache {
             data: Arc::new(RwLock::new((
-              Arc::new(serde_json::Value::Null), JsonDataCacheStatus::Uninitialized
+                Arc::new(serde_json::Value::Null),
+                JsonDataCacheStatus::Uninitialized,
             ))),
         };
 
         let cache_data = Arc::clone(&cache.data);
-        
+
         // Every interval, fetch the data from the URL and cache it in memory.
         tokio::task::spawn(async move {
             interval.tick().await;
@@ -45,7 +46,7 @@ impl JsonDataCache {
                                 Ok(json) => {
                                     let mut data = cache_data.write().await;
                                     *data = (Arc::new(json), JsonDataCacheStatus::Ok);
-                                },
+                                }
                                 Err(e) => {
                                     let mut data = cache_data.write().await;
                                     data.1 = JsonDataCacheStatus::InvalidResponse(e.to_string());
@@ -55,7 +56,7 @@ impl JsonDataCache {
                             let mut data = cache_data.write().await;
                             data.1 = JsonDataCacheStatus::UnableToFetch(status.to_string());
                         }
-                    },
+                    }
                     Err(e) => {
                         let mut data = cache_data.write().await;
                         data.1 = JsonDataCacheStatus::UnableToFetch(e.to_string());
@@ -72,17 +73,11 @@ impl JsonDataCache {
                 let data = cache.data.read().await;
                 let (ref json, ref status) = *data;
                 match status {
-                    JsonDataCacheStatus::Ok => {
-                        Some(Arc::clone(json))
-                    },
-                    _ => {
-                        None
-                    }
+                    JsonDataCacheStatus::Ok => Some(Arc::clone(json)),
+                    _ => None,
                 }
-            },
-            None => {
-                Some(Arc::new(Value::Null))
             }
+            None => Some(Arc::new(Value::Null)),
         }
     }
 }
