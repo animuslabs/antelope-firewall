@@ -45,7 +45,7 @@ impl RoutingModeState {
 
 pub struct AntelopeFirewall {
     filters: Vec<Filter>,
-    ratelimiters: Vec<Mutex<RateLimiter<String>>>,
+    ratelimiters: Vec<RateLimiter<String>>,
     matching_engine: MatchingEngine,
     routing_mode: RoutingModeState
 }
@@ -58,6 +58,8 @@ pub enum AntelopeFirewallError {
     AcceptTCPConnectionFailed(String),
     #[error("Failed to parse the request body, received error: `{0}`")]
     ParseBodyFailed(String),
+    #[error("Failed to parse the response body, received error: `{0}`")]
+    ParseResponseBodyFailed(String),
 }
 
 use AntelopeFirewallError::*;
@@ -76,7 +78,7 @@ impl AntelopeFirewall {
         self
     }
     pub fn add_ratelimiter(mut self, ratelimiter: RateLimiter<String>) -> Self {
-        self.ratelimiters.push(Mutex::new(ratelimiter));
+        self.ratelimiters.push(ratelimiter);
         self
     }
     pub fn add_rule(mut self, rule: Box<MatchingFn>) -> Self {
@@ -145,7 +147,6 @@ impl AntelopeFirewall {
 
         // Check if the request should be rate limited
         for ratelimiter in &self.ratelimiters {
-            let mut ratelimiter = ratelimiter.lock().await;
             if !ratelimiter.should_request_pass(Arc::clone(&request_info), Arc::clone(&body_json)).await {
                 return Ok(get_ratelimit_response(ratelimiter.get_window_duration()));
             }
@@ -202,18 +203,21 @@ impl AntelopeFirewall {
             .send()
             .await.unwrap();
         
-        // Update any ratelimiters that need to be notified on failure
-        //if todo!() {
-            //urls;
-        //};
-
-        
         // Respond to the client
         let mut client_res = Response::builder()
             .status(node_res.status());
-
         client_res.headers_mut().map(|h| h.clone_from(node_res.headers()));
-        let final_response = client_res.body(full(node_res.bytes().await.unwrap())).unwrap();
+
+        let response_bytes = node_res.bytes().await.unwrap();
+        let response_json = Arc::new(serde_json::from_slice::<serde_json::Value>(&response_bytes)
+            .map_err(|e| ParseResponseBodyFailed(e.to_string()))?);
+
+        // Update any ratelimiters that need to be notified on failure
+        for ratelimiter in &self.ratelimiters {
+            ratelimiter.post_increment(Arc::clone(&request_info), Arc::clone(&body_json), Arc::clone(&response_json)).await;
+        }
+
+        let final_response = client_res.body(full(response_bytes)).unwrap();
         Ok(final_response)
     }
 }

@@ -27,23 +27,11 @@ impl Filter {
 
     /// Checks if the request should be filtered out
     pub async fn should_request_pass(&self, request_info: Arc<RequestInfo>, value: Arc<Value>) -> bool {
-        match self.cache {
-            Some(ref cache) => {
-                let data = cache.data.read().await;
-                let (json, status) = (*data).clone();
-                match status {
-                    JsonDataCacheStatus::Ok => {
-                        return (self.should_request_pass)((request_info, value, Arc::new(json))).await;
-                    },
-                    _ => {
-                        return false;
-                    }
-                }
-            },
-            None => {
-                return (self.should_request_pass)((request_info, value, Arc::new(Value::Null))).await;
-            }
-        }
+        let json = match JsonDataCache::handle_cache_option(&self.cache).await {
+            Some(val) => val,
+            None => { return false; }
+        };
+        (self.should_request_pass)((request_info, value, json)).await
     }
 }
 

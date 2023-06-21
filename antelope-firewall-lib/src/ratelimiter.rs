@@ -1,11 +1,21 @@
 use std::{collections::HashMap, hash::Hash, sync::Arc, time::{SystemTime, UNIX_EPOCH, Duration}};
 use serde_json::Value;
+use tokio::sync::Mutex;
 
-use crate::{FilterFn, json_data_cache::{JsonDataCache, JsonDataCacheStatus}, MapFn, RequestInfo};
+use crate::{FilterFn, json_data_cache::JsonDataCache, MapFn, RequestInfo, PostMapFn};
 
 pub enum IncrementMode {
-    Before,
-    After
+    Before(Box<MapFn<u64>>),
+    After(Box<PostMapFn<u64>>)
+}
+
+impl IncrementMode {
+    pub fn should_run_before_request(&self) -> bool {
+        match self {
+            IncrementMode::Before(_) => true,
+            IncrementMode::After(_) => false
+        }
+    }
 }
 
 /// RateLimiter is a struct that will be used to limit the rate of requests.
@@ -22,13 +32,11 @@ pub struct RateLimiter<T> {
     cache: Option<Arc<JsonDataCache>>,
 
     window_duration: u64,
-    current_window: u64,
 
-    current_buckets: Arc<HashMap<T, u64>>,
-    last_buckets: Arc<HashMap<T, u64>>
+    current_window_state: Mutex<(u64, HashMap<T, u64>, HashMap<T, u64>)>
 }
 
-impl<T: Eq + Hash> RateLimiter<T> {
+impl<T: Eq + Hash + Clone> RateLimiter<T> {
     pub fn new(
         name: String,
         should_be_limited: Box<FilterFn>,
@@ -38,7 +46,7 @@ impl<T: Eq + Hash> RateLimiter<T> {
         cache: Option<Arc<JsonDataCache>>,
         window_duration: u64,
     ) -> Self {
-        let mut limiter = RateLimiter {
+        RateLimiter {
             name,
             should_be_limited,
             get_bucket,
@@ -46,95 +54,101 @@ impl<T: Eq + Hash> RateLimiter<T> {
             increment_mode,
             cache,
             window_duration,
-            current_window: 0,
-            current_buckets: Arc::new(HashMap::new()),
-            last_buckets: Arc::new(HashMap::new())
-        };
-        limiter.current_window = limiter.get_current_window();
-        limiter
+            current_window_state: Mutex::new((
+                RateLimiter::<T>::get_current_window(window_duration),
+                HashMap::new(),
+                HashMap::new()
+            ))
+        }
     }
 
-    pub fn get_current_window(&self) -> u64 {
+    pub fn get_current_window(window_duration: u64) -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards").as_secs() / self.window_duration
+            .expect("Time went backwards").as_secs() / window_duration
     }
 
-    pub fn elapsed_current_window(&self) -> f32 {
+    fn elapsed_current_window(window_duration: u64, current_window: u64) -> f32 {
         SystemTime::now()
-            .duration_since(UNIX_EPOCH + Duration::from_secs(self.current_window * self.window_duration))
-            .expect("Time went backwards").as_secs_f32() / self.window_duration as f32
+            .duration_since(UNIX_EPOCH + Duration::from_secs(current_window * window_duration))
+            .expect("Time went backwards").as_secs_f32() / window_duration as f32
     }
 
     pub fn get_window_duration(&self) -> u64 {
         self.window_duration
     }
 
-    pub fn update_current_window(&mut self) {
-        let current_window = self.get_current_window();
-        if current_window != self.current_window {
-            self.last_buckets = Arc::clone(&self.current_buckets);
-            self.current_buckets = Arc::new(HashMap::new());
+    pub fn update_current_window(window_duration: u64, current_window: &mut u64, last_buckets: &mut HashMap<T, u64>, current_buckets: &mut HashMap<T, u64>) {
+        let real_current_window = RateLimiter::<T>::get_current_window(window_duration);
+        if real_current_window != *current_window {
+            std::mem::swap(last_buckets, current_buckets);
+            *current_buckets = HashMap::new();
             
-            if self.current_window + 1 != current_window {
-                self.last_buckets = Arc::new(HashMap::new());
+            if *current_window + 1 != real_current_window {
+                *last_buckets = HashMap::new();
             }
-            self.current_window = current_window;
+            *current_window = real_current_window;
         }
     }
 
-    pub async fn should_request_pass(&mut self, request_info: Arc<RequestInfo>, value: Arc<Value>) -> bool {
-        self.update_current_window();
+    pub async fn should_request_pass(&self, request_info: Arc<RequestInfo>, value: Arc<Value>) -> bool {
+        let (current_window, last_buckets, current_buckets) = &mut *self.current_window_state.lock().await;
 
-        let (bucket, rate_limit) = match self.cache {
-            Some(ref cache) => {
-                let data = cache.data.read().await;
-                let (json, status) = (*data).clone();
-                match status {
-                    JsonDataCacheStatus::Ok => {
-                        if (self.should_be_limited)((Arc::clone(&request_info), Arc::clone(&value), Arc::new(json.clone()))).await {
-                            self.get_parameters(request_info, value, Arc::new(json)).await
-                        } else {
-                            return false;
-                        }
-                    },
-                    _ => {
-                        return false;
-                    }
-                }
-            },
-            None => {
-                if (self.should_be_limited)((Arc::clone(&request_info), Arc::clone(&value), Arc::new(Value::Null))).await {
-                    self.get_parameters(request_info, value, Arc::new(Value::Null)).await
-                } else {
-                    return false;
-                }
-            }
+        Self::update_current_window(self.window_duration, current_window, last_buckets, current_buckets);
+
+        let json = match JsonDataCache::handle_cache_option(&self.cache).await {
+            Some(val) => val,
+            None => { return false; }
+        };
+        let (bucket, rate_limit) = if (self.should_be_limited)((Arc::clone(&request_info), Arc::clone(&value), Arc::clone(&json))).await {
+            (
+                (self.get_bucket)((Arc::clone(&request_info), Arc::clone(&value), Arc::clone(&json))).await,
+                (self.get_ratelimit)((Arc::clone(&request_info), Arc::clone(&value), Arc::clone(&json))).await
+            )
+        } else {
+            return false;
         };
         
-        match bucket {
+        let should_pass = match bucket {
             Some(ref bucket) => {
-                let current_count = *self.current_buckets.get(bucket).unwrap_or(&0);
-                let last_count = *self.last_buckets.get(bucket).unwrap_or(&0);
+                let current_count = *current_buckets.get(bucket).unwrap_or(&0);
+                let last_count = *last_buckets.get(bucket).unwrap_or(&0);
 
-                let ratio_elapsed = self.elapsed_current_window();
+                let ratio_elapsed = RateLimiter::<T>::elapsed_current_window(self.window_duration, *current_window);
                 let count_for_ip = ((current_count as f32) * ratio_elapsed) + (
                     last_count as f32 * (1.0 - ratio_elapsed)
                 );
+
+                if let IncrementMode::Before(get_rate_used) = &self.increment_mode {
+                    Self::increment(current_buckets, bucket.clone(), get_rate_used((request_info, value, json)).await).await;
+                };
 
                 count_for_ip > rate_limit as f32 && current_count <= (2 * rate_limit)
             },
             None => {
                 false
             }
-        }
+        };
+
+        should_pass
     }
 
-    // TODO: Add increment functions
+    pub async fn increment(current_buckets: &mut HashMap<T, u64>, bucket: T, val: u64) {
+        current_buckets.entry(bucket)
+            .and_modify(|e| *e += val)
+            .or_insert(val);
+    }
 
-    async fn get_parameters(&self, request_info: Arc<RequestInfo>, value: Arc<Value>, data: Arc<Value>) -> (Option<T>, u64) {
-        let bucket = (self.get_bucket)((Arc::clone(&request_info), Arc::clone(&value), Arc::clone(&data))).await;
-        let rate_limit = (self.get_ratelimit)((request_info, value, data)).await;
-        (bucket, rate_limit)
+    pub async fn post_increment(&self, request_info: Arc<RequestInfo>, data: Arc<Value>, response: Arc<Value>) {
+        let (_, _, current_buckets) = &mut *self.current_window_state.lock().await;
+        let json = match JsonDataCache::handle_cache_option(&self.cache).await {
+            Some(val) => val,
+            None => { return; }
+        };
+        if let IncrementMode::After(get_rate_used) = &self.increment_mode {
+            if let Some(bucket) = (self.get_bucket)((Arc::clone(&request_info), Arc::clone(&data), Arc::clone(&json))).await {
+                Self::increment(current_buckets, bucket, get_rate_used((request_info, data, response, json)).await).await;
+            }
+        }
     }
 }

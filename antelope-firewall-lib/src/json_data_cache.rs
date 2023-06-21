@@ -1,10 +1,11 @@
 use reqwest::Url;
+use serde_json::Value;
 use std::sync::Arc;
 use tokio::{sync::RwLock, time::Interval};
 
 /// Periodically fetches data from external sources and caches it in memory.
 pub struct JsonDataCache {
-    pub data: Arc<RwLock<(serde_json::Value, JsonDataCacheStatus)>>,
+    pub data: Arc<RwLock<(Arc<serde_json::Value>, JsonDataCacheStatus)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -20,7 +21,7 @@ impl JsonDataCache {
     pub fn new(url: Url, mut interval: Interval) -> Self {
         let cache = JsonDataCache {
             data: Arc::new(RwLock::new((
-              serde_json::Value::Null, JsonDataCacheStatus::Uninitialized
+              Arc::new(serde_json::Value::Null), JsonDataCacheStatus::Uninitialized
             ))),
         };
 
@@ -43,7 +44,7 @@ impl JsonDataCache {
                             match json {
                                 Ok(json) => {
                                     let mut data = cache_data.write().await;
-                                    *data = (json, JsonDataCacheStatus::Ok);
+                                    *data = (Arc::new(json), JsonDataCacheStatus::Ok);
                                 },
                                 Err(e) => {
                                     let mut data = cache_data.write().await;
@@ -63,5 +64,25 @@ impl JsonDataCache {
             }
         });
         cache
+    }
+
+    pub async fn handle_cache_option(cache_opt: &Option<Arc<Self>>) -> Option<Arc<Value>> {
+        match cache_opt {
+            Some(ref cache) => {
+                let data = cache.data.read().await;
+                let (ref json, ref status) = *data;
+                match status {
+                    JsonDataCacheStatus::Ok => {
+                        Some(Arc::clone(json))
+                    },
+                    _ => {
+                        None
+                    }
+                }
+            },
+            None => {
+                Some(Arc::new(Value::Null))
+            }
+        }
     }
 }

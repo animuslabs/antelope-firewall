@@ -36,4 +36,5 @@ pub type Fut<T> = Pin<Box<dyn Future<Output = T> + Send + Sync>>;
 
 pub type FilterFn = dyn Fn((Arc<RequestInfo>, Arc<Value>, Arc<Value>)) -> Fut<bool> + Send + Sync + 'static;
 pub type MapFn<T> = dyn Fn((Arc<RequestInfo>, Arc<Value>, Arc<Value>)) -> Fut<T> + Send + Sync + 'static;
+pub type PostMapFn<T> = dyn Fn((Arc<RequestInfo>, Arc<Value>, Arc<Value>, Arc<Value>)) -> Fut<T> + Send + Sync + 'static;
 pub type MatchingFn = dyn Fn((Arc<RequestInfo>, Arc<Value>, Arc<Value>, HashSet<(Url, u64)>)) -> Fut<HashSet<(Url, u64)>> + Send + Sync + 'static;
