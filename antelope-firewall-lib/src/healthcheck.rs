@@ -1,7 +1,7 @@
 use chrono::Utc;
 use reqwest::Url;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::Arc,
     time::Duration,
 };
@@ -13,7 +13,7 @@ struct HealthChecker {
     healthy_map: RwLock<HashMap<Url, bool>>,
 }
 
-use crate::{api_responses::GetInfoReponse, MatchingFn};
+use crate::api_responses::GetInfoReponse;
 
 impl HealthChecker {
     pub async fn start(nodes: Vec<Url>, duration: Duration) -> Arc<Self> {
@@ -43,31 +43,11 @@ impl HealthChecker {
     }
 
     pub async fn is_url_healthy(self: Arc<Self>, url: &Url) -> bool {
-        //match self.healthy_map.read().await {
-        //    Ok(map) => {
-        //        match map.get(url) {
-        //            Some(healthy) => *healthy,
-        //            None => false
-        //        }
-        //    },
-        //    Err(_) => false
-        //}
-        true
-    }
-
-    pub fn as_matching_engine_rule(self: Arc<Self>) -> Box<MatchingFn> {
-        let checker = Arc::clone(&self);
-        Box::new(|(_, _, _, urls)| {
-            Box::pin(async move {
-                let mut new_urls = HashSet::new();
-                //for url in urls {
-                //    if checker.is_url_healthy(&url.0).await {
-                //        new_urls.insert(url);
-                //    }
-                //}
-                new_urls
-            })
-        })
+        let healthy_map = self.healthy_map.read().await;
+        match healthy_map.get(url) {
+            Some(healthy) => *healthy,
+            None => false
+        }
     }
 }
 

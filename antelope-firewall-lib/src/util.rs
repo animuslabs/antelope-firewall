@@ -16,7 +16,15 @@ pub fn get_blocked_response() -> Response<BoxBody<Bytes, hyper::Error>> {
         .status(403)
         .header("Content-Type", "text/plain")
         .body(full(""))
-        .expect("Invalid Ratelimit Response")
+        .expect("Invalid Blocked Response")
+}
+
+pub fn get_options_response() -> Response<BoxBody<Bytes, hyper::Error>> {
+    Response::builder()
+        .status(200)
+        .header("Allow", "OPTIONS, GET, POST")
+        .body(full(""))
+        .expect("Invalid Options Response")
 }
 
 pub fn get_error_response(

@@ -2,17 +2,15 @@ use itertools::Itertools;
 use rand::distributions::WeightedIndex;
 use rand::prelude::Distribution;
 use reqwest::Url;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
 
 use crate::matching_engine::MatchingEngine;
-use crate::ratelimiter::IncrementMode;
-use crate::util::{full, get_blocked_response, get_error_response, get_ratelimit_response};
+use crate::util::{full, get_blocked_response, get_error_response, get_ratelimit_response, get_options_response};
 use crate::{filter::Filter, ratelimiter::RateLimiter};
 use crate::{MatchingFn, RequestInfo};
 
@@ -81,7 +79,7 @@ impl AntelopeFirewall {
         self.ratelimiters.push(ratelimiter);
         self
     }
-    pub fn add_rule(mut self, rule: Box<MatchingFn>) -> Self {
+    pub fn add_matching_rule(mut self, rule: Box<MatchingFn>) -> Self {
         self.matching_engine.add_rule(rule);
         self
     }
@@ -127,6 +125,7 @@ impl AntelopeFirewall {
         // Parse thr request, try to put body into JSON
         let (parts, body) = req.into_parts();
 
+
         // Check size hint, return 413 error if too big
         let max = body.size_hint().upper().unwrap_or(u64::MAX);
         // TODO: make this configurable
@@ -158,6 +157,10 @@ impl AntelopeFirewall {
             {
                 return Ok(get_blocked_response());
             }
+        }
+
+        if parts.method == Method::OPTIONS {
+            return Ok(get_options_response());
         }
 
         // Check if the request should be rate limited
@@ -240,6 +243,7 @@ impl AntelopeFirewall {
             .send()
             .await
             .unwrap();
+        let node_status = node_res.status();
 
         // Respond to the client
         let mut client_res = Response::builder().status(node_res.status());
@@ -249,19 +253,25 @@ impl AntelopeFirewall {
 
         let response_bytes = node_res.bytes().await.unwrap();
         let response_json = Arc::new(
-            serde_json::from_slice::<serde_json::Value>(&response_bytes)
-                .map_err(|e| ParseResponseBodyFailed(e.to_string()))?,
+            (
+                serde_json::from_slice::<serde_json::Value>(&response_bytes)
+                    .map_err(|e| ParseResponseBodyFailed(e.to_string()))?,
+                node_status
+            )
         );
 
         // Update any ratelimiters that need to be notified on failure
         for ratelimiter in &self.ratelimiters {
-            ratelimiter
-                .post_increment(
-                    Arc::clone(&request_info),
-                    Arc::clone(&body_json),
-                    Arc::clone(&response_json),
-                )
-                .await;
+            if !ratelimiter.increment_mode.should_run_before_request() {
+
+                ratelimiter
+                    .post_increment(
+                        Arc::clone(&request_info),
+                        Arc::clone(&body_json),
+                        Arc::clone(&response_json),
+                    )
+                    .await;
+            }
         }
 
         let final_response = client_res.body(full(response_bytes)).unwrap();

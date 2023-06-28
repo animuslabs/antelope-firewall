@@ -1,3 +1,4 @@
+use hyper::StatusCode;
 use serde_json::Value;
 use std::{
     collections::HashMap,
@@ -189,7 +190,7 @@ impl<T: Eq + Hash + Clone> RateLimiter<T> {
         &self,
         request_info: Arc<RequestInfo>,
         data: Arc<Value>,
-        response: Arc<Value>,
+        response: Arc<(Value, StatusCode)>,
     ) {
         let (_, _, current_buckets) = &mut *self.current_window_state.lock().await;
         let json = match JsonDataCache::handle_cache_option(&self.cache).await {
