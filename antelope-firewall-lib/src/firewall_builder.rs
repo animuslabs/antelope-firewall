@@ -94,6 +94,8 @@ impl AntelopeFirewall {
             .await
             .map_err(|e| AntelopeFirewallError::StartingServerFailed(e.to_string(), port))?;
 
+        // TODO: Start Prometheus
+
         loop {
             let (stream, _) = listener
                 .accept()

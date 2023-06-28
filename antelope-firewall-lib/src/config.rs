@@ -1,12 +1,13 @@
 // Parses config and returns a firewall
 
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
+use chrono::Duration;
 use reqwest::Url;
 use serde::Deserialize;
 use tokio::sync::RwLock;
 
-use crate::{firewall_builder::{RoutingModeState, AntelopeFirewall}, filter::Filter, ratelimiter::{RateLimiter, IncrementMode}};
+use crate::{firewall_builder::{RoutingModeState, AntelopeFirewall}, filter::Filter, ratelimiter::{RateLimiter, IncrementMode}, healthcheck::HealthChecker};
 
 #[derive(Deserialize, Debug)]
 pub struct Config {
@@ -125,12 +126,13 @@ lazy_static::lazy_static! {
 
     pub static ref PUSH_NODES: RwLock<HashSet<(Url, u64)>> = RwLock::new(HashSet::new());
     pub static ref GET_NODES: RwLock<HashSet<(Url, u64)>> = RwLock::new(HashSet::new());
+
+    pub static ref HEALTH_CHECKER: RwLock<Option<Arc<HealthChecker>>> = RwLock::new(None);
 }
 
 pub async fn from_config(config: Config) -> Result<AntelopeFirewall, ()> {
     let mut firewall = AntelopeFirewall::new(config.routing_mode.to_state());
 
-    // TODO: Start Prometheus
 
     {
         let mut ip_guard = BLOCKED_IPS.write().await;
@@ -186,13 +188,15 @@ pub async fn from_config(config: Config) -> Result<AntelopeFirewall, ()> {
     }
 
     let mut push_nodes_guard = PUSH_NODES.write().await;
-    *push_nodes_guard = push_nodes;
+    *push_nodes_guard = push_nodes.clone();
     drop(push_nodes_guard);
 
     let mut get_nodes: HashSet<(Url, u64)> = HashSet::new();
     for node in config.get_nodes {
         get_nodes.insert((node.url.parse::<Url>().map_err(|_| ())?, node.weight.unwrap_or(1)));
     }
+
+    let nodes: HashSet<Url> = get_nodes.iter().chain(push_nodes.iter()).map(|(url, _)| url.clone()).collect();
 
     firewall = firewall.add_matching_rule(Box::new(move |(req, _, _, _)| Box::pin(async move {
         if GET_ENDPOINTS.contains(&req.uri.to_string()) {
@@ -204,7 +208,22 @@ pub async fn from_config(config: Config) -> Result<AntelopeFirewall, ()> {
     })));
 
     if let Some(healthcheck) = config.healthcheck {
-        //firewall = firewall.add_healthcheck(healthcheck);
+        {
+            let mut healthcheck_guard = HEALTH_CHECKER.write().await;
+            *healthcheck_guard = Some(HealthChecker::start(
+                nodes.into_iter().collect(),
+                Duration::seconds(healthcheck.interval as i64),
+                Duration::seconds(healthcheck.grace_period as i64)
+            ).await);
+        }
+        firewall = firewall.add_matching_rule(Box::new(move |(_, _, _, nodes)| Box::pin(async move {
+            let healthcheck_guard = HEALTH_CHECKER.read().await;
+            if let Some(ref h) = *healthcheck_guard {
+                h.filter_healthy_urls(nodes).await
+            } else {
+                nodes
+            }
+        })));
     }
 
     Ok(firewall)
