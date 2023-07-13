@@ -13,6 +13,7 @@ pub mod json_data_cache;
 pub mod matching_engine;
 pub mod ratelimiter;
 pub mod config;
+pub mod de;
 
 mod util;
 

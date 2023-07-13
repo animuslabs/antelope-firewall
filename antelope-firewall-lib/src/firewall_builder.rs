@@ -137,7 +137,7 @@ impl AntelopeFirewall {
             return Ok(resp);
         }
 
-        let request_info = Arc::new(RequestInfo::new(parts.headers.clone(), parts.uri, ip));
+        let request_info = Arc::new(RequestInfo::new(parts.headers.clone(), parts.uri.clone(), ip));
         let body_bytes = match parts.method {
             Method::POST => body
                 .collect()
@@ -146,11 +146,16 @@ impl AntelopeFirewall {
                 .to_bytes(),
             _ => Bytes::new(),
         };
+        
         let body_json = Arc::new(
-            serde_json::from_slice::<serde_json::Value>(&body_bytes)
-                .map_err(|e| ParseBodyFailed(e.to_string()))?,
+            match parts.method {
+                Method::POST => serde_json::from_slice::<serde_json::Value>(&body_bytes)
+                    .map_err(|e| ParseBodyFailed(e.to_string()))?,
+                _ => serde_json::Value::Null
+            }
         );
 
+        println!("Checking filter");
         // Check if the request should be filtered out
         for filter in &self.filters {
             if !filter
@@ -165,16 +170,19 @@ impl AntelopeFirewall {
             return Ok(get_options_response());
         }
 
+        println!("Checking rate limit");
         // Check if the request should be rate limited
         for ratelimiter in &self.ratelimiters {
             if !ratelimiter
                 .should_request_pass(Arc::clone(&request_info), Arc::clone(&body_json))
                 .await
             {
+                println!("Request failed on {}", ratelimiter.name);
                 return Ok(get_ratelimit_response(ratelimiter.get_window_duration()));
             }
         }
 
+        println!("Finding end url");
         // Find end nodes that can accept the request with the matching engine
         let urls = self
             .matching_engine
@@ -186,7 +194,7 @@ impl AntelopeFirewall {
             )));
         }
 
-        let url = match self.routing_mode {
+        let mut url = match self.routing_mode {
             RoutingModeState::LeastConnected(ref counts) => {
                 urls.into_iter()
                     .map(|(url, weight)| {
@@ -214,7 +222,7 @@ impl AntelopeFirewall {
                 let modulated = count % urls.iter().map(|(_, weight)| weight).sum::<u64>();
                 urls.iter()
                     .fold_while(
-                        (modulated, Url::parse("127.0.0.1").unwrap()),
+                        (modulated, Url::parse("https://127.0.0.1/").unwrap()),
                         |(weights_left, s), (url, weight)| {
                             if weights_left < *weight {
                                 Done((0, url.clone()))
@@ -232,11 +240,13 @@ impl AntelopeFirewall {
                 urls[dist.sample(&mut rand::thread_rng())].clone()
             }
         };
+        url.set_path(&parts.uri.to_string());
 
         // Send the request
         let mut headers = parts.headers;
         headers.insert("X-Forwarded-For", ip.to_string().parse().unwrap());
 
+        println!("Sending to url: {:?}", url);
         let client = reqwest::Client::new();
         let node_res = client
             .post(url)

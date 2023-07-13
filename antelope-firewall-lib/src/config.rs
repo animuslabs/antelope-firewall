@@ -101,9 +101,10 @@ lazy_static::lazy_static! {
         "/v1/chain/send_transaction2".into(),
         "/v1/chain/compute_transaction".into(),
         "/v1/chain/send_read_only_transaction".into(),
-        "/v1/chain/push_block".into()
+        "/v1/chain/push_block".into(),
     ]);
     pub static ref GET_ENDPOINTS: HashSet<String> = HashSet::from([
+        "/v1/chain/get_account".into(),
         "/v1/chain/get_block".into(),
         "/v1/chain/get_block_info".into(),
         "/v1/chain/get_info".into(),
@@ -122,6 +123,7 @@ lazy_static::lazy_static! {
         "/v1/chain/get_activated_protocol_features".into(),
         "/v1/chain/get_accounts_by_authorizers".into(),
         "/v1/chain/get_transaction_status".into(),
+        "/v1/chain/get_producer_schedule".into()
     ]);
 
     pub static ref PUSH_NODES: RwLock<HashSet<(Url, u64)>> = RwLock::new(HashSet::new());
@@ -150,11 +152,10 @@ pub async fn from_config(config: Config) -> Result<AntelopeFirewall, ()> {
     firewall = firewall.add_filter(Filter::new(
         "Filter".into(),
         Box::new(|(req, value, _)| Box::pin(async move {
+            println!("{:?}", req);
             if !PUSH_ENDPOINTS.contains(&req.uri.to_string()) && !GET_ENDPOINTS.contains(&req.uri.to_string()) {
                 return false;
             } else if BLOCKED_IPS.read().await.contains(&req.ip.to_string()) {
-                return false;
-            } else if BLOCKED_CONTRACTS.read().await.contains(&value["contract"].as_str().unwrap().to_string()) {
                 return false;
             }
             true
@@ -196,13 +197,20 @@ pub async fn from_config(config: Config) -> Result<AntelopeFirewall, ()> {
         get_nodes.insert((node.url.parse::<Url>().map_err(|_| ())?, node.weight.unwrap_or(1)));
     }
 
+    let mut get_nodes_guard = GET_NODES.write().await;
+    *get_nodes_guard = get_nodes.clone();
+    drop(get_nodes_guard);
+
     let nodes: HashSet<Url> = get_nodes.iter().chain(push_nodes.iter()).map(|(url, _)| url.clone()).collect();
 
     firewall = firewall.add_matching_rule(Box::new(move |(req, _, _, _)| Box::pin(async move {
+        println!("Trying to match: {:?}", req);
         if GET_ENDPOINTS.contains(&req.uri.to_string()) {
-            return PUSH_NODES.read().await.clone();
-        } else if PUSH_ENDPOINTS.contains(&req.uri.to_string()) {
+            println!("Matched as get: {:?}", GET_NODES.read().await.clone());
             return GET_NODES.read().await.clone();
+        } else if PUSH_ENDPOINTS.contains(&req.uri.to_string()) {
+            println!("Matched as push");
+            return PUSH_NODES.read().await.clone();
         }
         HashSet::new()
     })));
@@ -218,6 +226,7 @@ pub async fn from_config(config: Config) -> Result<AntelopeFirewall, ()> {
         }
         firewall = firewall.add_matching_rule(Box::new(move |(_, _, _, nodes)| Box::pin(async move {
             let healthcheck_guard = HEALTH_CHECKER.read().await;
+            println!("Checking healthcheck: {:?}", nodes);
             if let Some(ref h) = *healthcheck_guard {
                 h.filter_healthy_urls(nodes).await
             } else {

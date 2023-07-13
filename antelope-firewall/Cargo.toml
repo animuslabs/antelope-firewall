@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 antelope-firewall-lib = { path = "../antelope-firewall-lib/" }
 tokio = { version = "1.28.2", features = ["full"] }
+toml = "0.7.6"

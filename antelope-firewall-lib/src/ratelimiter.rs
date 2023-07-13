@@ -4,7 +4,7 @@ use std::{
     collections::HashMap,
     hash::Hash,
     sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH}, fmt::Debug,
 };
 use tokio::sync::Mutex;
 
@@ -42,7 +42,7 @@ pub struct RateLimiter<T> {
     current_window_state: Mutex<(u64, HashMap<T, u64>, HashMap<T, u64>)>,
 }
 
-impl<T: Eq + Hash + Clone> RateLimiter<T> {
+impl<T: Eq + Hash + Clone + Debug> RateLimiter<T> {
     pub fn new(
         name: String,
         should_be_limited: Box<FilterFn>,
@@ -152,6 +152,7 @@ impl<T: Eq + Hash + Clone> RateLimiter<T> {
             return false;
         };
 
+
         let should_pass = match bucket {
             Some(ref bucket) => {
                 let current_count = *current_buckets.get(bucket).unwrap_or(&0);
@@ -171,7 +172,7 @@ impl<T: Eq + Hash + Clone> RateLimiter<T> {
                     .await;
                 };
 
-                count_for_ip > rate_limit as f32 && current_count <= (2 * rate_limit)
+                (count_for_ip < rate_limit as f32) && current_count <= (2 * rate_limit)
             }
             None => false,
         };

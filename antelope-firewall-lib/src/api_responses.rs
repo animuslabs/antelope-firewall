@@ -6,7 +6,7 @@ use serde_json::Value;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct GetInfoReponse {
-    pub head_block_time: DateTime<Utc>,
+    pub head_block_time: String,
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
 }
