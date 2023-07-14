@@ -1,6 +1,6 @@
 # For help with toml format: https://toml.io/en/v1.0.0
 
-# Can be "round_robin"
+# Can be "round_robin", 
 routing_mode = "round_robin"
 
 # Port that the firewall will run on
@@ -29,14 +29,25 @@ block_contracts = ["eosio"]
 block_ips = []
 
 # Every table in the ratelimit array constitutes a new rate limiter that will be applied in
-# consecutive order
+# consecutive order.
 
 [[ratelimit]]
 # Name of ratelimiter, used for logging
 name = "base"
+# Can be "attempt", incrementing when a request is received or "failure", incrementing
+# when a request is 
 limit_on = "attempt"
-bucket_type = "sender"
+# Represents the ratelimit bucket. "ip" sets the bucket to be the request IP. "contract"
+# is for all accounts in an action list, and "sender" is for all accounts in an authorization
+# list. For "contract" and "sender", the ratelimiter needs to pass for all accounts and all authorizers
+# in a transaction, not just one
+bucket_type = "ip"
+# We use the sliding window algorithm to ensure that (on average) the value of the
+# ratelimiter will not go over `limit` for a given window. Will not allow more than
+# 2*`limit` for any given window. 
+# https://medium.com/@avocadi/rate-limiter-sliding-window-counter-7ec08dbe21d6
 limit = 10
+# must be nonzero
 window_duration = 60
 
 [[ratelimit]]
