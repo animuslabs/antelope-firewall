@@ -3,6 +3,7 @@
 use std::{collections::HashSet, sync::Arc};
 
 use chrono::Duration;
+use jsonpath::Selector;
 use reqwest::Url;
 use serde::Deserialize;
 use tokio::sync::RwLock;
@@ -169,9 +170,17 @@ pub async fn from_config(config: Config) -> Result<AntelopeFirewall, ()> {
             Box::new(|_| Box::pin(async { true })),
             match ratelimit.bucket_type {
                 //TODO: finish contract and sender
-                RatelimitBucket::Contract => Box::new(|_| Box::pin(async move { Some("".to_string()) })),
-                RatelimitBucket::IP => Box::new(|(req, _, _)| Box::pin(async move { Some(req.ip.to_string()) })),
-                RatelimitBucket::Sender => Box::new(|req| Box::pin(async move { Some("".to_string()) })),
+                RatelimitBucket::Contract => Box::new(|(_, body, _)| Box::pin(async move { 
+                    let selector = Selector::new("$.unpacked_trx.actions.*.account").unwrap();
+                    selector.find(&body).into_iter().filter_map(|found| found.as_str().map(|account| account.to_string())).collect::<HashSet<String>>()
+                 })),
+                RatelimitBucket::IP => Box::new(|(req, _, _)| Box::pin(async move { 
+                    HashSet::from([req.ip.to_string()]) 
+                })),
+                RatelimitBucket::Sender => Box::new(|(_, body, _)| Box::pin(async move {
+                    let selector = Selector::new("$.unpacked_trx.actions.*.authorization.*.actor").unwrap();
+                    selector.find(&body).into_iter().filter_map(|found| found.as_str().map(|actor| actor.to_string())).collect::<HashSet<String>>()
+                })),
             },
             Box::new(move |_| Box::pin(async move { ratelimit.limit })),
             match ratelimit.limit_on {

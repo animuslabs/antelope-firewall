@@ -2,6 +2,7 @@ use itertools::Itertools;
 use rand::distributions::WeightedIndex;
 use rand::prelude::Distribution;
 use reqwest::Url;
+use serde_json::Map;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::AtomicU64;
@@ -9,6 +10,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::net::TcpListener;
 
+use crate::de::Transaction;
 use crate::matching_engine::MatchingEngine;
 use crate::util::{full, get_blocked_response, get_error_response, get_ratelimit_response, get_options_response};
 use crate::{filter::Filter, ratelimiter::RateLimiter};
@@ -43,7 +45,7 @@ impl RoutingModeState {
 
 pub struct AntelopeFirewall {
     filters: Vec<Filter>,
-    ratelimiters: Vec<RateLimiter<String>>,
+    ratelimiters: Vec<RateLimiter>,
     matching_engine: MatchingEngine,
     routing_mode: RoutingModeState,
 }
@@ -75,7 +77,7 @@ impl AntelopeFirewall {
         self.filters.push(filter);
         self
     }
-    pub fn add_ratelimiter(mut self, ratelimiter: RateLimiter<String>) -> Self {
+    pub fn add_ratelimiter(mut self, ratelimiter: RateLimiter) -> Self {
         self.ratelimiters.push(ratelimiter);
         self
     }
@@ -149,8 +151,21 @@ impl AntelopeFirewall {
         
         let body_json = Arc::new(
             match parts.method {
-                Method::POST => serde_json::from_slice::<serde_json::Value>(&body_bytes)
-                    .map_err(|e| ParseBodyFailed(e.to_string()))?,
+                Method::POST => {
+                    let mut parsed = serde_json::from_slice::<serde_json::Value>(&body_bytes)
+                        .map_err(|e| ParseBodyFailed(e.to_string()))?;
+                    if let Some(m) = parsed.as_object_mut() {
+                        if let Some(hex) = m.get_mut("packed_trx")
+                            .and_then(|e| e.as_str())
+                            .and_then(|s| hex::decode(s).ok()) {
+                            if let Some(serialized) = crate::de::from_bytes::<Transaction>(&hex[..]).ok()
+                                .and_then(|trx| serde_json::to_value(&trx).ok()) {
+                                m.insert("unpacked_trx".into(), serialized);
+                            }
+                        }
+                    }
+                    parsed
+                },
                 _ => serde_json::Value::Null
             }
         );

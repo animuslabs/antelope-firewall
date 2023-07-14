@@ -2,7 +2,7 @@ use core::{num, fmt};
 use core::convert::TryInto;
 use std::ops::{AddAssign, MulAssign, Neg};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde::de::{
     self, DeserializeSeed, EnumAccess, IntoDeserializer, MapAccess, SeqAccess,
     VariantAccess, Visitor,
@@ -818,6 +818,14 @@ impl<'de> Deserialize<'de> for Varuint {
     }
 }
 
+impl Serialize for Varuint {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer {
+        serializer.serialize_u32(self.value)
+    }
+}
+
 #[derive(Debug)]
 pub struct Name {
     value: String
@@ -826,6 +834,14 @@ pub struct Name {
 impl Name {
     fn new(value: String) -> Self {
         Name { value }
+    }
+}
+
+impl Serialize for Name {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer {
+        serializer.serialize_str(&self.value)
     }
 }
 
@@ -893,7 +909,7 @@ impl<'de> Deserialize<'de> for Name {
     }
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct Transaction {
     pub expiration: u32,
     pub ref_block_num: u16,
@@ -905,14 +921,15 @@ pub struct Transaction {
     pub actions: Vec<Action>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct Action {
     pub account: Name,
     pub name: Name,
-    pub authorization: Vec<Authorization>
+    pub authorization: Vec<Authorization>,
+    pub data: Vec<u8>
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct Authorization {
     pub actor: Name,
     pub permission: Name

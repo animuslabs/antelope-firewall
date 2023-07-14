@@ -1,7 +1,7 @@
 use hyper::StatusCode;
 use serde_json::Value;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     hash::Hash,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH}, fmt::Debug,
@@ -26,11 +26,11 @@ impl IncrementMode {
 
 /// RateLimiter is a struct that will be used to limit the rate of requests.
 /// We use the SlidingWindow technique, where we maintain two buckets
-pub struct RateLimiter<T> {
+pub struct RateLimiter {
     pub name: String,
 
     should_be_limited: Box<FilterFn>,
-    get_bucket: Box<MapFn<Option<T>>>,
+    get_buckets: Box<MapFn<HashSet<String>>>,
     get_ratelimit: Box<MapFn<u64>>,
 
     pub increment_mode: IncrementMode,
@@ -39,14 +39,14 @@ pub struct RateLimiter<T> {
 
     window_duration: u64,
 
-    current_window_state: Mutex<(u64, HashMap<T, u64>, HashMap<T, u64>)>,
+    current_window_state: Mutex<(u64, HashMap<String, u64>, HashMap<String, u64>)>,
 }
 
-impl<T: Eq + Hash + Clone + Debug> RateLimiter<T> {
+impl RateLimiter {
     pub fn new(
         name: String,
         should_be_limited: Box<FilterFn>,
-        get_bucket: Box<MapFn<Option<T>>>,
+        get_buckets: Box<MapFn<HashSet<String>>>,
         get_ratelimit: Box<MapFn<u64>>,
         increment_mode: IncrementMode,
         cache: Option<Arc<JsonDataCache>>,
@@ -55,13 +55,13 @@ impl<T: Eq + Hash + Clone + Debug> RateLimiter<T> {
         RateLimiter {
             name,
             should_be_limited,
-            get_bucket,
+            get_buckets,
             get_ratelimit,
             increment_mode,
             cache,
             window_duration,
             current_window_state: Mutex::new((
-                RateLimiter::<T>::get_current_window(window_duration),
+                RateLimiter::get_current_window(window_duration),
                 HashMap::new(),
                 HashMap::new(),
             )),
@@ -91,10 +91,10 @@ impl<T: Eq + Hash + Clone + Debug> RateLimiter<T> {
     pub fn update_current_window(
         window_duration: u64,
         current_window: &mut u64,
-        last_buckets: &mut HashMap<T, u64>,
-        current_buckets: &mut HashMap<T, u64>,
+        last_buckets: &mut HashMap<String, u64>,
+        current_buckets: &mut HashMap<String, u64>,
     ) {
-        let real_current_window = RateLimiter::<T>::get_current_window(window_duration);
+        let real_current_window = RateLimiter::get_current_window(window_duration);
         if real_current_window != *current_window {
             std::mem::swap(last_buckets, current_buckets);
             *current_buckets = HashMap::new();
@@ -127,7 +127,7 @@ impl<T: Eq + Hash + Clone + Debug> RateLimiter<T> {
                 return false;
             }
         };
-        let (bucket, rate_limit) = if (self.should_be_limited)((
+        let (buckets, rate_limit) = if (self.should_be_limited)((
             Arc::clone(&request_info),
             Arc::clone(&value),
             Arc::clone(&json),
@@ -135,7 +135,7 @@ impl<T: Eq + Hash + Clone + Debug> RateLimiter<T> {
         .await
         {
             (
-                (self.get_bucket)((
+                (self.get_buckets)((
                     Arc::clone(&request_info),
                     Arc::clone(&value),
                     Arc::clone(&json),
@@ -152,35 +152,32 @@ impl<T: Eq + Hash + Clone + Debug> RateLimiter<T> {
             return false;
         };
 
+        for ref bucket in buckets {
+            let current_count = *current_buckets.get(bucket).unwrap_or(&0);
+            let last_count = *last_buckets.get(bucket).unwrap_or(&0);
 
-        let should_pass = match bucket {
-            Some(ref bucket) => {
-                let current_count = *current_buckets.get(bucket).unwrap_or(&0);
-                let last_count = *last_buckets.get(bucket).unwrap_or(&0);
+            let ratio_elapsed =
+                RateLimiter::elapsed_current_window(self.window_duration, *current_window);
+            let count_for_ip = ((current_count as f32) * ratio_elapsed)
+                + (last_count as f32 * (1.0 - ratio_elapsed));
 
-                let ratio_elapsed =
-                    RateLimiter::<T>::elapsed_current_window(self.window_duration, *current_window);
-                let count_for_ip = ((current_count as f32) * ratio_elapsed)
-                    + (last_count as f32 * (1.0 - ratio_elapsed));
+            if let IncrementMode::Before(get_rate_used) = &self.increment_mode {
+                Self::increment(
+                    current_buckets,
+                    bucket.clone(),
+                    get_rate_used((Arc::clone(&request_info), Arc::clone(&value), Arc::clone(&json))).await,
+                )
+                .await;
+            };
 
-                if let IncrementMode::Before(get_rate_used) = &self.increment_mode {
-                    Self::increment(
-                        current_buckets,
-                        bucket.clone(),
-                        get_rate_used((request_info, value, json)).await,
-                    )
-                    .await;
-                };
-
-                (count_for_ip < rate_limit as f32) && current_count <= (2 * rate_limit)
+            if (count_for_ip > rate_limit as f32) || current_count >= (2 * rate_limit) {
+                return false;
             }
-            None => false,
-        };
-
-        should_pass
+        }
+        true
     }
 
-    pub async fn increment(current_buckets: &mut HashMap<T, u64>, bucket: T, val: u64) {
+    pub async fn increment(current_buckets: &mut HashMap<String, u64>, bucket: String, val: u64) {
         current_buckets
             .entry(bucket)
             .and_modify(|e| *e += val)
@@ -201,7 +198,13 @@ impl<T: Eq + Hash + Clone + Debug> RateLimiter<T> {
             }
         };
         if let IncrementMode::After(get_rate_used) = &self.increment_mode {
-            if let Some(bucket) = (self.get_bucket)((
+            let rate_used = get_rate_used((
+                Arc::clone(&request_info), 
+                Arc::clone(&data),
+                Arc::clone(&response),
+                Arc::clone(&json)
+            )).await;
+            for bucket in (self.get_buckets)((
                 Arc::clone(&request_info),
                 Arc::clone(&data),
                 Arc::clone(&json),
@@ -211,7 +214,7 @@ impl<T: Eq + Hash + Clone + Debug> RateLimiter<T> {
                 Self::increment(
                     current_buckets,
                     bucket,
-                    get_rate_used((request_info, data, response, json)).await,
+                    rate_used
                 )
                 .await;
             }

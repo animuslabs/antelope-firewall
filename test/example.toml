@@ -7,13 +7,13 @@ interval = 15
 grace_period = 5
 
 [filter]
-block_contracts = ["banned_contracts"]
+block_contracts = ["eosio"]
 block_ips = []
 
 [[ratelimit]]
 name = "base"
 limit_on = "attempt"
-bucket_type = "ip"
+bucket_type = "sender"
 limit = 10
 window_duration = 60
 
