@@ -1,53 +1,76 @@
+# For help with toml format: https://toml.io/en/v1.0.0
+
+# Can be "round_robin",
 routing_mode = "round_robin"
+
+# Port that the firewall will run on
 port = 3000
+
+# Port that prometheus will run on
 prometheus_port = 3001
 
-healthcheck_interval = 15
-healthcheck_time_to_invalid = 5
+# Healthcheck will run a get_info request every `interval` seconds on all nodes to determine
+# which nodes are in sync. If a node has a head_block_time more than `grace_period` seconds
+# older than the current system time, that node will not be considered as a valid node
+# to route requests to. Healthcheck will then keep making requests at the same interval
+# to determine if the node re-syncs.
+#
+# This is an optional field. If you remove or comment out the below table healthcheck will
+# not run.
+[healthcheck]
+# must be non zero
+interval = 15
+grace_period = 5
 
-[[endpoint_groups]]
-includes = ["group:endpoints", ""]
+[filter]
+# block transactions that contain an action sent to an account in the below array
+block_contracts = ["eosio"]
+# block requests that originate from the below IP list.
+block_ips = []
 
-[[block_txns]]
-name = "banned_contracts"
-should_drop = "data[tx.contract]"
-cache_interval = "10"
-data_url = "http://127.0.0.1:6000/banned_contracts.json"
+# Every table in the ratelimit array constitutes a new rate limiter that will be applied in
+# consecutive order.
 
-[[ratelimiters]]
+[[ratelimit]]
+# Name of ratelimiter, used for logging
 name = "base"
-filter = ["endpoint=/push_transactions", ""]
-bucket = ["ip"]
-increment_on = "request"
-max_allowed = { type = "fetch_map", url = "http://127.0.0.1/paid", default = "" }
-window_duration = "10"
+# Can be "attempt", incrementing when a request is received or "failure", incrementing
+# when a request fails
+limit_on = "attempt"
+# Represents the ratelimit bucket. "ip" sets the bucket to be the request IP. "contract"
+# is for all accounts in an action list, and "sender" is for all accounts in an authorization
+# list. For "contract" and "sender", the ratelimiter needs to pass for all accounts and all authorizers
+# in a transaction, not just one
+bucket_type = "ip"
+# We use the sliding window algorithm to ensure that (on average) the value of the
+# ratelimiter will not go over `limit` for a given window. Will not allow more than
+# 2*`limit` for any given window.
+# https://medium.com/@avocadi/rate-limiter-sliding-window-counter-7ec08dbe21d6
+limit = 10
+# must be nonzero
+window_duration = 60
 
-[[ratelimiters]]
+[[ratelimit]]
 name = "failure"
-get_bucket = "req.ip"
-increment_on = "failure"
-max_allowed = { type = "const", value = "10" }
-window_duration = "10"
+limit_on = "failure"
+bucket_type = "sender"
+limit = 1
+window_duration = 10
 
-[[nodes]]
-name = "get_1"
-url = "http://127.0.0.1:5000"
-can_handle = [ "get" ]
-routing_weight = 2
+# List of nodes that requests that mutate blockchain state can be forwarded to
+[[push_nodes]]
+# Name of node, used for logging
+name = "push"
+# base url that requests will be forwarded to. Please put without the ending /
+url = "https://eos.greymass.com"
+# Must be non-zero. Can be left out, will default to 1
+routing_weight = 1
 
-[[nodes]]
-name = "push_1"
-url = "http://127.0.0.1:5001"
-can_handle = [ "push" ]
+# List of nodes that requests that only read blockchain state can be forwarded to
+[[get_nodes]]
+name = "get"
+url = "https://eos.greymass.com"
 
-[[nodes]]
-name = "get_2"
-url = "http://127.0.0.1:5002"
-can_handle = [ "all" ]
-routing_weight = 5
-
-[[nodes]]
-name = "get_3"
-url = "http://127.0.0.1:5003"
-can_handle = [ "get_account" ]
-
+[[get_nodes]]
+name = "get"
+url = "https://mainnet.genereos.io"
