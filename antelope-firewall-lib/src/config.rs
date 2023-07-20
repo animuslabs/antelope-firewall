@@ -1,6 +1,6 @@
 // Parses config and returns a firewall
 
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, sync::Arc, net::SocketAddr};
 
 use chrono::Duration;
 use jsonpath::Selector;
@@ -8,13 +8,13 @@ use reqwest::Url;
 use serde::Deserialize;
 use tokio::sync::RwLock;
 
-use crate::{firewall_builder::{RoutingModeState, AntelopeFirewall}, filter::Filter, ratelimiter::{RateLimiter, IncrementMode}, healthcheck::HealthChecker};
+use crate::{firewall_builder::{RoutingModeState, AntelopeFirewall}, filter::Filter, ratelimiter::{RateLimiter, IncrementMode}, healthcheck::HealthChecker, prometheus::start_prometheus_exporter};
 
 #[derive(Deserialize, Debug)]
 pub struct Config {
     pub routing_mode: RoutingMode,
-    pub port: u16,
-    pub prometheus_port: Option<u16>,
+    pub address: String,
+    pub prometheus_address: Option<String>,
 
     pub healthcheck: Option<HealthcheckConfig>,
 
@@ -58,7 +58,7 @@ pub enum RatelimitBucket {
     Contract,
     #[serde(rename = "ip")]
     IP,
-    #[serde(rename = "sender")]
+    #[serde(rename = "authorizer")]
     Sender,
 }
 
@@ -134,7 +134,17 @@ lazy_static::lazy_static! {
 }
 
 pub async fn from_config(config: Config) -> Result<AntelopeFirewall, ()> {
-    let mut firewall = AntelopeFirewall::new(config.routing_mode.to_state());
+    // TODO: Add proper error handling
+    if let Some(socket_str) = config.prometheus_address {
+        let prometheus_address: SocketAddr = socket_str.parse().unwrap();
+        start_prometheus_exporter(prometheus_address);
+    }
+
+    let socket_addr: SocketAddr = config.address.parse().unwrap();
+    let mut firewall = AntelopeFirewall::new(
+        config.routing_mode.to_state(),
+        socket_addr
+    );
 
 
     {

@@ -12,6 +12,7 @@ use tokio::net::TcpListener;
 
 use crate::de::Transaction;
 use crate::matching_engine::MatchingEngine;
+use crate::prometheus::{REQUESTS_RECEIVED, REQUESTS_FAILED_TO_ROUTE, SUCCESS_NODE_RESPONSES, CLIENT_ERROR_NODE_RESPONSES, SERVER_ERROR_NODE_RESPONSES};
 use crate::util::{full, get_blocked_response, get_error_response, get_ratelimit_response, get_options_response};
 use crate::{filter::Filter, ratelimiter::RateLimiter};
 use crate::{MatchingFn, RequestInfo};
@@ -48,12 +49,13 @@ pub struct AntelopeFirewall {
     ratelimiters: Vec<RateLimiter>,
     matching_engine: MatchingEngine,
     routing_mode: RoutingModeState,
+    socket_addr: SocketAddr
 }
 
 #[derive(Error, Debug, Clone)]
 pub enum AntelopeFirewallError {
-    #[error("Failed to start a server on port: `{1}`, received error: `{0}`")]
-    StartingServerFailed(String, u16),
+    #[error("Failed to start a server on socket: `{1}`, received error: `{0}`")]
+    StartingServerFailed(String, SocketAddr),
     #[error("Failed to accept a new TCP connection, received error: `{0}`")]
     AcceptTCPConnectionFailed(String),
     #[error("Failed to parse the request body, received error: `{0}`")]
@@ -65,12 +67,13 @@ pub enum AntelopeFirewallError {
 use AntelopeFirewallError::*;
 
 impl AntelopeFirewall {
-    pub fn new(routing_mode: RoutingModeState) -> Self {
+    pub fn new(routing_mode: RoutingModeState, socket_addr: SocketAddr) -> Self {
         AntelopeFirewall {
             filters: Vec::new(),
             ratelimiters: Vec::new(),
             matching_engine: MatchingEngine::new(),
             routing_mode,
+            socket_addr
         }
     }
     pub fn add_filter(mut self, filter: Filter) -> Self {
@@ -90,11 +93,9 @@ impl AntelopeFirewall {
         Arc::new(self)
     }
     pub async fn run(self: Arc<Self>) -> Result<(), AntelopeFirewallError> {
-        let port = 3000;
-        let addr = SocketAddr::from(([127, 0, 0, 1], port));
-        let listener = TcpListener::bind(addr)
+        let listener = TcpListener::bind(self.socket_addr)
             .await
-            .map_err(|e| AntelopeFirewallError::StartingServerFailed(e.to_string(), port))?;
+            .map_err(|e| AntelopeFirewallError::StartingServerFailed(e.to_string(), self.socket_addr))?;
 
         // TODO: Start Prometheus
 
@@ -126,9 +127,10 @@ impl AntelopeFirewall {
         req: Request<hyper::body::Incoming>,
         ip: IpAddr,
     ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, AntelopeFirewallError> {
+        REQUESTS_RECEIVED.inc();
+
         // Parse thr request, try to put body into JSON
         let (parts, body) = req.into_parts();
-
 
         // Check size hint, return 413 error if too big
         let max = body.size_hint().upper().unwrap_or(u64::MAX);
@@ -204,6 +206,7 @@ impl AntelopeFirewall {
             .find_matching_urls(Arc::clone(&request_info), Arc::clone(&body_json))
             .await;
         if urls.len() == 0 {
+            REQUESTS_FAILED_TO_ROUTE.inc();
             return Ok(get_error_response(full(
                 "Failed to find a route for your request.",
             )));
@@ -272,6 +275,14 @@ impl AntelopeFirewall {
             .unwrap();
         let node_status = node_res.status();
 
+        if node_status.is_success() {
+            SUCCESS_NODE_RESPONSES.inc();
+        } else if node_status.is_client_error() {
+            CLIENT_ERROR_NODE_RESPONSES.inc();
+        } else if node_status.is_server_error() {
+            SERVER_ERROR_NODE_RESPONSES.inc();
+        }
+
         // Respond to the client
         let mut client_res = Response::builder().status(node_res.status());
         client_res
@@ -290,7 +301,6 @@ impl AntelopeFirewall {
         // Update any ratelimiters that need to be notified on failure
         for ratelimiter in &self.ratelimiters {
             if !ratelimiter.increment_mode.should_run_before_request() {
-
                 ratelimiter
                     .post_increment(
                         Arc::clone(&request_info),

@@ -14,6 +14,7 @@ pub mod matching_engine;
 pub mod ratelimiter;
 pub mod config;
 pub mod de;
+pub mod prometheus;
 
 mod util;
 
