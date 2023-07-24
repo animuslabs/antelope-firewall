@@ -162,14 +162,21 @@ pub async fn from_config(config: Config) -> Result<AntelopeFirewall, ()> {
 
     firewall = firewall.add_filter(Filter::new(
         "Filter".into(),
-        Box::new(|(req, value, _)| Box::pin(async move {
+        Box::new(|(req, body, _)| Box::pin(async move {
             println!("{:?}", req);
             if !PUSH_ENDPOINTS.contains(&req.uri.to_string()) && !GET_ENDPOINTS.contains(&req.uri.to_string()) {
                 return false;
             } else if BLOCKED_IPS.read().await.contains(&req.ip.to_string()) {
                 return false;
+            } else {
+                let selector = Selector::new("$.unpacked_trx.actions.*.account").unwrap();
+                let contract_guard = BLOCKED_CONTRACTS.read().await;
+                return !selector.find(&body).into_iter()
+                    .filter_map(|found| found.as_str().map(|account| account.to_string()))
+                    .any(|account| {
+                        contract_guard.contains(&account)
+                    });
             }
-            true
         })),
         None
     ));
