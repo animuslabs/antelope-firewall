@@ -40,8 +40,9 @@ pub struct HealthcheckConfig {
 
 #[derive(Deserialize, Debug)]
 pub struct FilterConfig {
-    pub block_contracts: Vec<String>,
-    pub block_ips: Vec<String>,
+    pub block_contracts: Option<Vec<String>>,
+    pub block_ips: Option<Vec<String>>,
+    pub allow_only_contracts: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +99,8 @@ impl RoutingMode {
 lazy_static::lazy_static! {
     pub static ref BLOCKED_IPS: RwLock<HashSet<String>> = RwLock::new(HashSet::new());
     pub static ref BLOCKED_CONTRACTS: RwLock<HashSet<String>> = RwLock::new(HashSet::new());
+    pub static ref ALLOW_ONLY_CONTRACTS: RwLock<HashSet<String>> = RwLock::new(HashSet::new());
+
     pub static ref PUSH_ENDPOINTS: HashSet<String> = HashSet::from([
         "/v1/chain/push_transaction".into(),
         "/v1/chain/send_transaction".into(),
@@ -151,16 +154,27 @@ pub async fn from_config(config: Config) -> Result<AntelopeFirewall, String> {
         socket_addr
     );
 
+    if let Some(filter_config) = config.filter {
+        if filter_config.block_contracts.is_some() && filter_config.allow_only_contracts.is_some() {
+            return Err("Cannot block and allow contracts at the same time.".into());
+        }
 
-    {
         let mut ip_guard = BLOCKED_IPS.write().await;
         let mut contract_guard = BLOCKED_CONTRACTS.write().await;
-        if let Some(filter) = config.filter {
-            for ip in filter.block_ips {
+        let mut allow_contract_guard = ALLOW_ONLY_CONTRACTS.write().await;
+        if let Some(ips) = filter_config.block_ips {
+            for ip in ips {
                 ip_guard.insert(ip);
             }
-            for contract in filter.block_contracts {
+        }
+        if let Some(contracts) = filter_config.block_contracts {
+            for contract in contracts {
                 contract_guard.insert(contract);
+            }
+        }
+        if let Some(contracts) = filter_config.allow_only_contracts {
+            for contract in contracts {
+                allow_contract_guard.insert(contract);
             }
         }
     }
@@ -176,11 +190,20 @@ pub async fn from_config(config: Config) -> Result<AntelopeFirewall, String> {
             } else {
                 let selector = Selector::new("$.unpacked_trx.actions.*.account").unwrap();
                 let contract_guard = BLOCKED_CONTRACTS.read().await;
-                return !selector.find(&body).into_iter()
-                    .filter_map(|found| found.as_str().map(|account| account.to_string()))
-                    .any(|account| {
-                        contract_guard.contains(&account)
-                    });
+                let allow_contract_guard = ALLOW_ONLY_CONTRACTS.read().await;
+                if contract_guard.is_empty() {
+                    return selector.find(&body).into_iter()
+                        .filter_map(|found| found.as_str().map(|account| account.to_string()))
+                        .all(|account| {
+                            allow_contract_guard.contains(&account)
+                        });
+                } else {
+                    return !selector.find(&body).into_iter()
+                        .filter_map(|found| found.as_str().map(|account| account.to_string()))
+                        .any(|account| {
+                            contract_guard.contains(&account)
+                        });
+                }
             }
         })),
         None
