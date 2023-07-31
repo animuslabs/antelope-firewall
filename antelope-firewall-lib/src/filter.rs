@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use prometheus_exporter::prometheus::{core::{AtomicF64, GenericCounter}, register_counter};
 use serde_json::Value;
 
 use crate::{
@@ -13,6 +14,9 @@ pub struct Filter {
     name: String,
     should_request_pass: Box<FilterFn>,
     cache: Option<Arc<JsonDataCache>>,
+    processed_counter: GenericCounter<AtomicF64>,
+    denied_counter: GenericCounter<AtomicF64>,
+    accepted_counter: GenericCounter<AtomicF64>
 }
 
 impl Filter {
@@ -22,9 +26,21 @@ impl Filter {
         cache: Option<Arc<JsonDataCache>>,
     ) -> Self {
         Filter {
-            name,
+            name: name.clone(),
             should_request_pass,
             cache,
+            processed_counter: register_counter!(
+                format!("filter_{}_processed", name),
+                format!("Number of requests processed by {} filter", name),
+            ).unwrap(),
+            denied_counter: register_counter!(
+                format!("filter_{}_denied", name),
+                format!("Number of requests denied by {} filter", name),
+            ).unwrap(),
+            accepted_counter: register_counter!(
+                format!("filter_{}_accepted", name),
+                format!("Number of requests accepted by {} filter", name),
+            ).unwrap(),
         }
     }
 
@@ -34,12 +50,19 @@ impl Filter {
         request_info: Arc<RequestInfo>,
         value: Arc<Value>,
     ) -> bool {
+        self.processed_counter.inc();
         let json = match JsonDataCache::handle_cache_option(&self.cache).await {
             Some(val) => val,
             None => {
                 return false;
             }
         };
-        (self.should_request_pass)((request_info, value, json)).await
+        let retval = (self.should_request_pass)((request_info, value, json)).await;
+        if retval {
+            self.accepted_counter.inc();
+        } else {
+            self.denied_counter.inc();
+        }
+        retval
     }
 }

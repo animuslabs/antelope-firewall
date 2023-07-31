@@ -1,6 +1,6 @@
 // Parses config and returns a firewall
 
-use std::{collections::HashSet, sync::Arc, net::SocketAddr};
+use std::{collections::{HashSet, HashMap}, sync::Arc, net::SocketAddr};
 
 use chrono::Duration;
 use jsonpath::Selector;
@@ -60,6 +60,8 @@ pub enum RatelimitBucket {
     IP,
     #[serde(rename = "authorizer")]
     Sender,
+    #[serde(rename = "table")]
+    Table,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -70,6 +72,7 @@ pub struct RatelimitConfig {
 
     pub limit: u64,
     pub window_duration: u64,
+    pub select_accounts: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,9 +134,11 @@ lazy_static::lazy_static! {
     pub static ref GET_NODES: RwLock<HashSet<(Url, u64)>> = RwLock::new(HashSet::new());
 
     pub static ref HEALTH_CHECKER: RwLock<Option<Arc<HealthChecker>>> = RwLock::new(None);
+
+    pub static ref SELECT_ACCOUNTS: RwLock<HashMap<String, HashSet<String>>> = RwLock::new(HashMap::new());
 }
 
-pub async fn from_config(config: Config) -> Result<AntelopeFirewall, ()> {
+pub async fn from_config(config: Config) -> Result<AntelopeFirewall, String> {
     // TODO: Add proper error handling
     if let Some(socket_str) = config.prometheus_address {
         let prometheus_address: SocketAddr = socket_str.parse().unwrap();
@@ -180,23 +185,71 @@ pub async fn from_config(config: Config) -> Result<AntelopeFirewall, ()> {
         })),
         None
     ));
-
+    
+    let mut names = HashSet::new();
     for ratelimit in config.ratelimit {
+        if names.contains(&ratelimit.name) {
+            return Err(format!("Duplicate name for ratelimiter '{}'. Names must be unique.", ratelimit.name));
+        } else {
+            names.insert(ratelimit.name.clone());
+        }
+
+        {
+            let mut select_accounts_guard = SELECT_ACCOUNTS.write().await;
+            if let Some(select_accounts) = ratelimit.select_accounts {
+                select_accounts_guard.insert(ratelimit.name.clone(), HashSet::from_iter(select_accounts));
+            }
+        }
+
+        let mut select_accounts_guard = SELECT_ACCOUNTS.write().await;
         firewall = firewall.add_ratelimiter(RateLimiter::new(
             ratelimit.name,
             Box::new(|_| Box::pin(async { true })),
             match ratelimit.bucket_type {
-                //TODO: finish contract and sender
-                RatelimitBucket::Contract => Box::new(|(_, body, _)| Box::pin(async move { 
+                RatelimitBucket::Contract => Box::new(|(name, _, body, _)| Box::pin(async move { 
                     let selector = Selector::new("$.unpacked_trx.actions.*.account").unwrap();
-                    selector.find(&body).into_iter().filter_map(|found| found.as_str().map(|account| account.to_string())).collect::<HashSet<String>>()
-                 })),
-                RatelimitBucket::IP => Box::new(|(req, _, _)| Box::pin(async move { 
+                    let unfiltered = selector.find(&body).into_iter().filter_map(|found| found.as_str().map(|account| account.to_string())).collect::<HashSet<String>>();
+                    let select_accounts_map = SELECT_ACCOUNTS.read().await;
+                    if let Some(select_accounts) = select_accounts_map.get(name.as_ref()) {
+                        unfiltered.into_iter().filter(|account| {
+                            select_accounts.contains(account)
+                        }).collect::<HashSet<String>>()
+                    } else {
+                        unfiltered
+                    }
+                })),
+                RatelimitBucket::IP => Box::new(|(_, req, _, _)| Box::pin(async move { 
                     HashSet::from([req.ip.to_string()]) 
                 })),
-                RatelimitBucket::Sender => Box::new(|(_, body, _)| Box::pin(async move {
+                RatelimitBucket::Sender => Box::new(|(name, _, body, _)| Box::pin(async move {
                     let selector = Selector::new("$.unpacked_trx.actions.*.authorization.*.actor").unwrap();
-                    selector.find(&body).into_iter().filter_map(|found| found.as_str().map(|actor| actor.to_string())).collect::<HashSet<String>>()
+                    let unfiltered = selector.find(&body).into_iter().filter_map(|found| found.as_str().map(|actor| actor.to_string())).collect::<HashSet<String>>();
+                    let select_accounts_map = SELECT_ACCOUNTS.read().await;
+                    if let Some(select_accounts) = select_accounts_map.get(name.as_ref()) {
+                        unfiltered.into_iter().filter(|account| {
+                            select_accounts.contains(account)
+                        }).collect::<HashSet<String>>()
+                    } else {
+                        unfiltered
+                    }
+                })),
+                RatelimitBucket::Table => Box::new(|(name, req, body, _)| Box::pin(async move {
+                    println!("{:?}", req.uri);
+                    let unfiltered = match (
+                        req.uri == "/v1/chain/get_table_rows" || req.uri == "/v1/chain/get_table_by_scope",
+                        body.get("code")
+                    ) {
+                        (true, Some(serde_json::Value::String(code))) => HashSet::from([code.clone()]),
+                        _ => HashSet::new()
+                    };
+                    let select_accounts_map = SELECT_ACCOUNTS.read().await;
+                    if let Some(select_accounts) = select_accounts_map.get(name.as_ref()) {
+                        unfiltered.into_iter().filter(|account| {
+                            select_accounts.contains(account)
+                        }).collect::<HashSet<String>>()
+                    } else {
+                        unfiltered
+                    }
                 })),
             },
             Box::new(move |_| Box::pin(async move { ratelimit.limit })),
@@ -211,7 +264,14 @@ pub async fn from_config(config: Config) -> Result<AntelopeFirewall, ()> {
 
     let mut push_nodes: HashSet<(Url, u64)> = HashSet::new();
     for node in config.push_nodes {
-        push_nodes.insert((node.url.parse::<Url>().map_err(|_| ())?, node.weight.unwrap_or(1)));
+        let weight = node.weight.unwrap_or(1);
+        if weight == 0 {
+            return Err(format!("Weight for node '{}' must be greater than 0.", node.name));
+        }
+        push_nodes.insert((
+            node.url.parse::<Url>().map_err(|_| format!("Could not parse node '{}' as url.", node.url))?,
+            weight
+        ));
     }
 
     let mut push_nodes_guard = PUSH_NODES.write().await;
@@ -220,7 +280,14 @@ pub async fn from_config(config: Config) -> Result<AntelopeFirewall, ()> {
 
     let mut get_nodes: HashSet<(Url, u64)> = HashSet::new();
     for node in config.get_nodes {
-        get_nodes.insert((node.url.parse::<Url>().map_err(|_| ())?, node.weight.unwrap_or(1)));
+        let weight = node.weight.unwrap_or(1);
+        if weight == 0 {
+            return Err(format!("Weight for node '{}' must be greater than 0.", node.name));
+        }
+        get_nodes.insert((
+            node.url.parse::<Url>().map_err(|_| format!("Could not parse node '{}' as url.", node.url))?,
+            weight
+        ));
     }
 
     let mut get_nodes_guard = GET_NODES.write().await;

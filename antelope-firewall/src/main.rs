@@ -17,17 +17,20 @@ async fn main() {
                             firewall.build().run().await;
                         },
                         Err(e) => {
-                            println!("Error occurred while running firewall.")
+                            println!("Error occurred while configuring firewall.");
+                            println!("Received error: {}", e);
                         },
                     }
                 },
                 Err(e) => {
-                    println!("Unable to parse config {}. Please run antelope-firewall --help for information on how to set the config path.", args.config)
+                    println!("Unable to parse config {}. Please run antelope-firewall --help for information on how to set the config path.", args.config);
+                    println!("Parsing error: {}", e);
                 }
             }
         },
-        Err(_) => {
-            println!("Unable to read config {}. Please run antelope-firewall --help for information on how to set the config path.", args.config)
+        Err(e) => {
+            println!("Unable to read config {}. Please run antelope-firewall --help for information on how to set the config path.", args.config);
+            println!("Received error: {}", e);
         }
     }
     

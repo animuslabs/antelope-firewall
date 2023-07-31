@@ -37,6 +37,8 @@ pub type FilterFn =
     dyn Fn((Arc<RequestInfo>, Arc<Value>, Arc<Value>)) -> Fut<bool> + Send + Sync;
 pub type MapFn<T> =
     dyn Fn((Arc<RequestInfo>, Arc<Value>, Arc<Value>)) -> Fut<T> + Send + Sync;
+pub type RatelimiterMapFn<T> =
+    dyn Fn((Arc<String>, Arc<RequestInfo>, Arc<Value>, Arc<Value>)) -> Fut<T> + Send + Sync;
 pub type PostMapFn<T> = dyn Fn((Arc<RequestInfo>, Arc<Value>, Arc<(Value, StatusCode)>, Arc<Value>)) -> Fut<T>
     + Send
     + Sync;

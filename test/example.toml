@@ -79,7 +79,7 @@ bucket_type = "ip"
 
 # limit: Integer
 # We use the sliding window algorithm to ensure that (on average) the value of the
-# ratelimiter will not go over `limit` for a given wi. Will not allow more than
+# ratelimiter will not go over `limit` for a given window of time. Will not allow more than
 # 2*`limit` for any given window. 
 # https://medium.com/@avocadi/rate-limiter-sliding-window-counter-7ec08dbe21d6
 limit = 10
@@ -88,15 +88,32 @@ limit = 10
 # Duration of the window in seconds.
 window_duration = 60
 
+
 # Example of a ratelimiter that limits any given transaction authorizer to only
 # be able to send a request if they have not had more than 2 failed transactions
-# in a given windows
+# every 60 seconds.
 [[ratelimit]]
 name = "failure"
 limit_on = "failure"
 bucket_type = "authorizer"
 limit = 2
 window_duration = 60
+# If select_accounts is specified, the ratelimiter will only apply for accounts
+# in the list. If not specified, the ratelimiter will apply to all accounts.
+select_accounts = ["mjurenka.gm", "eosio"]
+
+# Example of a ratelimiter that limits table requests of a particular table to only 30 ever minute.
+[[ratelimit]]
+name = "table"
+limit_on = "attempt"
+bucket_type = "table"
+tables = [["eosio", "voters"]]
+limit = 30
+window_duration = 60
+# If select_accounts is specified, the ratelimiter will only apply for tables
+# on contracts in the list. If not specified, the ratelimiter will apply to all tables.
+# This applies to /get_table_rows and /get_tables_by_scope
+select_accounts = ["mjurenka.gm", "eosio"]
 
 
 # List of nodes that requests that mutate blockchain state can be forwarded to
@@ -120,9 +137,9 @@ name = "push"
 # base url that requests will be forwarded to. Please put without the ending /
 url = "https://eos.greymass.com"
 
-# routing_weight: non-zero Integer
+# weight: non-zero Integer
 # Can be left out, will default to 1
-routing_weight = 1
+weight = 1
 
 
 # List of nodes that requests that only read blockchain state can be forwarded to

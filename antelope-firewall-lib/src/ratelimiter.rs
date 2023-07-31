@@ -1,4 +1,5 @@
 use hyper::StatusCode;
+use prometheus_exporter::prometheus::{core::{GenericCounter, AtomicF64}, register_counter};
 use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
@@ -8,7 +9,7 @@ use std::{
 };
 use tokio::sync::Mutex;
 
-use crate::{json_data_cache::JsonDataCache, FilterFn, MapFn, PostMapFn, RequestInfo};
+use crate::{json_data_cache::JsonDataCache, FilterFn, MapFn, PostMapFn, RequestInfo, RatelimiterMapFn};
 
 pub enum IncrementMode {
     Before(Box<MapFn<u64>>),
@@ -30,7 +31,7 @@ pub struct RateLimiter {
     pub name: String,
 
     should_be_limited: Box<FilterFn>,
-    get_buckets: Box<MapFn<HashSet<String>>>,
+    get_buckets: Box<RatelimiterMapFn<HashSet<String>>>,
     get_ratelimit: Box<MapFn<u64>>,
 
     pub increment_mode: IncrementMode,
@@ -40,20 +41,23 @@ pub struct RateLimiter {
     window_duration: u64,
 
     current_window_state: Mutex<(u64, HashMap<String, u64>, HashMap<String, u64>)>,
+    processed_counter: GenericCounter<AtomicF64>,
+    denied_counter: GenericCounter<AtomicF64>,
+    accepted_counter: GenericCounter<AtomicF64>
 }
 
 impl RateLimiter {
     pub fn new(
         name: String,
         should_be_limited: Box<FilterFn>,
-        get_buckets: Box<MapFn<HashSet<String>>>,
+        get_buckets: Box<RatelimiterMapFn<HashSet<String>>>,
         get_ratelimit: Box<MapFn<u64>>,
         increment_mode: IncrementMode,
         cache: Option<Arc<JsonDataCache>>,
         window_duration: u64,
     ) -> Self {
         RateLimiter {
-            name,
+            name: name.clone(),
             should_be_limited,
             get_buckets,
             get_ratelimit,
@@ -65,6 +69,9 @@ impl RateLimiter {
                 HashMap::new(),
                 HashMap::new(),
             )),
+            processed_counter: register_counter!(format!("ratelimiter_{}_processed", name), format!("Number of requests processed by {} ratelimiter", name)).unwrap(),
+            denied_counter: register_counter!(format!("ratelimiter_{}_denied", name), format!("Number of requests denied by {} ratelimiter", name)).unwrap(),
+            accepted_counter: register_counter!(format!("ratelimiter_{}_accepted", name), format!("Number of requests accepted by {} ratelimiter", name)).unwrap(),
         }
     }
 
@@ -111,6 +118,7 @@ impl RateLimiter {
         request_info: Arc<RequestInfo>,
         value: Arc<Value>,
     ) -> bool {
+        self.processed_counter.inc();
         let (current_window, last_buckets, current_buckets) =
             &mut *self.current_window_state.lock().await;
 
@@ -136,6 +144,7 @@ impl RateLimiter {
         {
             (
                 (self.get_buckets)((
+                    Arc::new(self.name.clone()),
                     Arc::clone(&request_info),
                     Arc::clone(&value),
                     Arc::clone(&json),
@@ -171,9 +180,11 @@ impl RateLimiter {
             };
 
             if (count_for_ip > rate_limit as f32) || current_count >= (2 * rate_limit) {
+                self.denied_counter.inc();
                 return false;
             }
         }
+        self.accepted_counter.inc();
         true
     }
 
@@ -205,6 +216,7 @@ impl RateLimiter {
                 Arc::clone(&json)
             )).await;
             for bucket in (self.get_buckets)((
+                Arc::new(self.name.clone()),
                 Arc::clone(&request_info),
                 Arc::clone(&data),
                 Arc::clone(&json),

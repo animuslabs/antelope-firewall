@@ -1,8 +1,10 @@
 use itertools::Itertools;
+use prometheus_exporter::prometheus::core::{AtomicF64, GenericCounter};
+use prometheus_exporter::prometheus::register_counter;
 use rand::distributions::WeightedIndex;
 use rand::prelude::Distribution;
 use reqwest::Url;
-use serde_json::Map;
+use tokio::sync::RwLock;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::AtomicU64;
@@ -25,6 +27,15 @@ use hyper::{Method, Request, Response};
 use http_body_util::combinators::BoxBody;
 use http_body_util::BodyExt;
 use itertools::FoldWhile::{Continue, Done};
+
+lazy_static::lazy_static! {
+    static ref MATCHING_COUNTERS: RwLock<HashMap<String, (
+        GenericCounter<AtomicF64>,
+        GenericCounter<AtomicF64>,
+        GenericCounter<AtomicF64>,
+        GenericCounter<AtomicF64>
+    )>> = RwLock::new(HashMap::new());
+}
 
 pub enum RoutingModeState {
     RoundRobin(HashMap<String, AtomicU64>),
@@ -258,6 +269,40 @@ impl AntelopeFirewall {
                 urls[dist.sample(&mut rand::thread_rng())].clone()
             }
         };
+
+        let prometheus_url_name = url.host_str().unwrap_or("unknown").replace(|c: char| c != '_' && !c.is_alphanumeric(), "_");
+        {
+            let guard = MATCHING_COUNTERS.read().await;
+            if !guard.contains_key(&prometheus_url_name) {
+                drop(guard);
+                let processed_counter = register_counter!(
+                    format!("node_{}_processed", prometheus_url_name),
+                    format!("Number of requests sent to node {}", prometheus_url_name)
+                ).unwrap();
+                let success_counter = register_counter!(
+                    format!("node_{}_success", prometheus_url_name),
+                    format!("Number of requests sent to node {} that returned success", prometheus_url_name)
+                ).unwrap();
+                let client_error_counter = register_counter!(
+                    format!("node_{}_client_error", prometheus_url_name),
+                    format!("Number of requests sent to node {} that returned a 4** error", prometheus_url_name)
+                ).unwrap();
+                let server_error_counter = register_counter!(
+                    format!("node_{}_server_error", prometheus_url_name),
+                    format!("Number of requests sent to node {} that returned a 5** error", prometheus_url_name)
+                ).unwrap();
+                processed_counter.inc();
+
+                let mut guard = MATCHING_COUNTERS.write().await;
+                guard.insert(
+                    prometheus_url_name.clone(),
+                    (processed_counter, success_counter, client_error_counter, server_error_counter)
+                );
+            } else {
+                guard.get(&prometheus_url_name).unwrap().0.inc();
+            }
+        }
+
         url.set_path(&parts.uri.to_string());
 
         // Send the request
@@ -267,7 +312,7 @@ impl AntelopeFirewall {
         println!("Sending to url: {:?}", url);
         let client = reqwest::Client::new();
         let node_res = client
-            .post(url)
+            .post(url.clone())
             .headers(headers)
             .body(body_bytes)
             .send()
@@ -275,12 +320,19 @@ impl AntelopeFirewall {
             .unwrap();
         let node_status = node_res.status();
 
-        if node_status.is_success() {
-            SUCCESS_NODE_RESPONSES.inc();
-        } else if node_status.is_client_error() {
-            CLIENT_ERROR_NODE_RESPONSES.inc();
-        } else if node_status.is_server_error() {
-            SERVER_ERROR_NODE_RESPONSES.inc();
+        {
+            let guard = MATCHING_COUNTERS.read().await;
+            let (_, success_counter, client_error_counter, server_error_counter) = guard.get(&prometheus_url_name).unwrap();
+            if node_status.is_success() {
+                SUCCESS_NODE_RESPONSES.inc();
+                success_counter.inc();
+            } else if node_status.is_client_error() {
+                CLIENT_ERROR_NODE_RESPONSES.inc();
+                client_error_counter.inc();
+            } else if node_status.is_server_error() {
+                SERVER_ERROR_NODE_RESPONSES.inc();
+                server_error_counter.inc();
+            }
         }
 
         // Respond to the client
