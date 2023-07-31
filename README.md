@@ -11,6 +11,18 @@ and antelope-firewall is a simple cli wrapper for the basic configuration of ant
 
 ## Running
 
+## With Docker
+
+1. Ensure a config file exists at `/etc/antelope-firewall/config.toml`. An example config file with documentation exists in the repo `test/example.toml`. Please read before you begin, for demonstration purposes at the moment it is not configured with sensible defaults (TODO: fix this).
+
+The firewall port must be 3000 and the prometheus port must be 3001.
+
+2. Build the docker image. `docker build -t antelope-firewall .`
+
+3. Run docker. `docker run`
+
+## Without Docker
+
 We are not providing prebuilt binaries for this project for milestone 1 and 2.
 In order to run, please run either `cargo run --bin antelope-firewall -- --config /path/to/config` or `cargo build --release --bin antelope-firewall`, then `./target/release/antelope-firewall --config /path/to/config`.
 Please ensure ensure that the config file is in toml format, following the example config file `test/example.toml`
