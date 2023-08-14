@@ -32,7 +32,6 @@ impl MatchingEngine {
                 urls,
             ))
             .await;
-            println!("New URLs {:?}", urls);
         }
         urls
     }

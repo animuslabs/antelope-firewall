@@ -182,7 +182,6 @@ pub async fn from_config(config: Config) -> Result<AntelopeFirewall, String> {
     firewall = firewall.add_filter(Filter::new(
         "Filter".into(),
         Box::new(|(req, body, _)| Box::pin(async move {
-            println!("{:?}", req);
             if !PUSH_ENDPOINTS.contains(&req.uri.to_string()) && !GET_ENDPOINTS.contains(&req.uri.to_string()) {
                 return false;
             } else if BLOCKED_IPS.read().await.contains(&req.ip.to_string()) {
@@ -257,7 +256,6 @@ pub async fn from_config(config: Config) -> Result<AntelopeFirewall, String> {
                     }
                 })),
                 RatelimitBucket::Table => Box::new(|(name, req, body, _)| Box::pin(async move {
-                    println!("{:?}", req.uri);
                     let unfiltered = match (
                         req.uri == "/v1/chain/get_table_rows" || req.uri == "/v1/chain/get_table_by_scope",
                         body.get("code")
@@ -320,12 +318,9 @@ pub async fn from_config(config: Config) -> Result<AntelopeFirewall, String> {
     let nodes: HashSet<Url> = get_nodes.iter().chain(push_nodes.iter()).map(|(url, _)| url.clone()).collect();
 
     firewall = firewall.add_matching_rule(Box::new(move |(req, _, _, _)| Box::pin(async move {
-        println!("Trying to match: {:?}", req);
         if GET_ENDPOINTS.contains(&req.uri.to_string()) {
-            println!("Matched as get: {:?}", GET_NODES.read().await.clone());
             return GET_NODES.read().await.clone();
         } else if PUSH_ENDPOINTS.contains(&req.uri.to_string()) {
-            println!("Matched as push");
             return PUSH_NODES.read().await.clone();
         }
         HashSet::new()
@@ -342,7 +337,6 @@ pub async fn from_config(config: Config) -> Result<AntelopeFirewall, String> {
         }
         firewall = firewall.add_matching_rule(Box::new(move |(_, _, _, nodes)| Box::pin(async move {
             let healthcheck_guard = HEALTH_CHECKER.read().await;
-            println!("Checking healthcheck: {:?}", nodes);
             if let Some(ref h) = *healthcheck_guard {
                 h.filter_healthy_urls(nodes).await
             } else {

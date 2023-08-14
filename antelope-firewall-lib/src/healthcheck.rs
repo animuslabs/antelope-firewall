@@ -6,6 +6,8 @@ use std::{
 };
 use tokio::sync::RwLock;
 
+use log::{info, error as err};
+
 pub struct HealthChecker {
     nodes: Vec<Url>,
     duration: Duration,
@@ -45,12 +47,12 @@ impl HealthChecker {
                         Ok(_) => {
                             get_info_response.insert(node_url.clone(), true);
                             drop(get_info_response);
-                            println!("Healthcheck on node at {} succeeded", get_info_url);
+                            info!("Healthcheck on node at {} succeeded", get_info_url);
                         },
                         Err(e) => {
                             get_info_response.insert(node_url.clone(), false);
                             drop(get_info_response);
-                            println!("Healthcheck on node at {} failed with error: {}", get_info_url, e);
+                            err!("Healthcheck on node at {} failed with error: {}", get_info_url, e);
                         },
                     }
                 }

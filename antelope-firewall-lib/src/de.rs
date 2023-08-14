@@ -225,7 +225,6 @@ impl<'de> Deserializer<'de> {
                 break;
             }
         }
-        println!("parsed {}", value);
         Ok(value)
     }
 
@@ -558,7 +557,6 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
-        println!("{}: {:?}", _name, _fields);
         visitor.visit_seq(CommaSeparated::new(self, _fields.len() as u32))
     }
 
