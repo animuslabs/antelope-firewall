@@ -12,6 +12,8 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::net::TcpListener;
 
+use log::{debug, error as err, info, warn};
+
 use crate::de::Transaction;
 use crate::matching_engine::MatchingEngine;
 use crate::prometheus::{REQUESTS_RECEIVED, REQUESTS_FAILED_TO_ROUTE, SUCCESS_NODE_RESPONSES, CLIENT_ERROR_NODE_RESPONSES, SERVER_ERROR_NODE_RESPONSES};
@@ -104,6 +106,8 @@ impl AntelopeFirewall {
         Arc::new(self)
     }
     pub async fn run(self: Arc<Self>) -> Result<(), AntelopeFirewallError> {
+        info!("Starting server on {}", self.socket_addr);
+        
         let listener = TcpListener::bind(self.socket_addr)
             .await
             .map_err(|e| AntelopeFirewallError::StartingServerFailed(e.to_string(), self.socket_addr))?;
@@ -127,7 +131,7 @@ impl AntelopeFirewall {
                     .serve_connection(stream, service_fn(|r| new_self.handle_request(r, address)))
                     .await
                 {
-                    println!("Error serving connection: {:?}", err);
+                    err!("Error serving connection: {:?}", err);
                 }
             });
         }
@@ -142,6 +146,7 @@ impl AntelopeFirewall {
 
         // Parse thr request, try to put body into JSON
         let (parts, body) = req.into_parts();
+        info!("Received Request from {} for url {}", ip, parts.uri);
 
         // Check size hint, return 413 error if too big
         let max = body.size_hint().upper().unwrap_or(u64::MAX);
@@ -149,6 +154,7 @@ impl AntelopeFirewall {
         if max > 1024 * 64 {
             let mut resp = Response::new(full("Body too big"));
             *resp.status_mut() = hyper::StatusCode::PAYLOAD_TOO_LARGE;
+            err!("Request from {} too large", ip);
             return Ok(resp);
         }
 
@@ -183,13 +189,13 @@ impl AntelopeFirewall {
             }
         );
 
-        println!("Checking filter");
         // Check if the request should be filtered out
         for filter in &self.filters {
             if !filter
                 .should_request_pass(Arc::clone(&request_info), Arc::clone(&body_json))
                 .await
             {
+                info!("Blocking {}'s request to {} because of filter rule.", ip, parts.uri);
                 return Ok(get_blocked_response());
             }
         }
@@ -198,25 +204,24 @@ impl AntelopeFirewall {
             return Ok(get_options_response());
         }
 
-        println!("Checking rate limit");
         // Check if the request should be rate limited
         for ratelimiter in &self.ratelimiters {
             if !ratelimiter
                 .should_request_pass(Arc::clone(&request_info), Arc::clone(&body_json))
                 .await
             {
-                println!("Request failed on {}", ratelimiter.name);
+                info!("Blocking {}'s request to {} because of ratelimiter {}", ip, parts.uri, ratelimiter.name);
                 return Ok(get_ratelimit_response(ratelimiter.get_window_duration()));
             }
         }
 
-        println!("Finding end url");
         // Find end nodes that can accept the request with the matching engine
         let urls = self
             .matching_engine
             .find_matching_urls(Arc::clone(&request_info), Arc::clone(&body_json))
             .await;
         if urls.len() == 0 {
+            info!("Unable to route {}'s request to {}", ip, parts.uri);
             REQUESTS_FAILED_TO_ROUTE.inc();
             return Ok(get_error_response(full(
                 "Failed to find a route for your request.",
@@ -309,7 +314,7 @@ impl AntelopeFirewall {
         let mut headers = parts.headers;
         headers.insert("X-Forwarded-For", ip.to_string().parse().unwrap());
 
-        println!("Sending to url: {:?}", url);
+        info!("Forwarding {}'s request to {} to {}", ip, parts.uri, url);
         let client = reqwest::Client::new();
         let node_res = client
             .post(url.clone())
@@ -362,6 +367,7 @@ impl AntelopeFirewall {
                     .await;
             }
         }
+        info!("Sending response for {}'s request to {}", ip, parts.uri);
 
         let final_response = client_res.body(full(response_bytes)).unwrap();
         Ok(final_response)

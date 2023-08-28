@@ -20,6 +20,7 @@ prometheus_exporter = "0.8.5"
 clap = { version = "4.3.2", features = ["derive"] }
 hex = { version = "0.4.3", features = ["serde"] }
 jsonpath = "0.1.1"
+log = "0.4.20"
 
 [lib]
 name = "antelope_firewall_lib"

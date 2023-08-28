@@ -19,7 +19,7 @@ The firewall port must be 3000 and the prometheus port must be 3001.
 
 2. Build the docker image. `docker build -t antelope-firewall .`
 
-3. Run docker. `docker run`
+3. Run docker. `docker run -p 127.0.0.1:3000:3000 antelope-firewall`
 
 ## Without Docker
 
