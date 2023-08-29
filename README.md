@@ -1,4 +1,4 @@
-# antelope-firewall Milestone 1
+# antelope-firewall Milestones 1 and 2
 
 This repo contains two crates, antelope-firewall and antelope-firewall-lib. antelope-firewall-lib is a framework that allows a developer to more easily write their own ratelimiter,
 and antelope-firewall is a simple cli wrapper for the basic configuration of antelope-firewall-lib.
