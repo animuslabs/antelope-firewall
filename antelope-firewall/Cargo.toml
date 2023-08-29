@@ -1,0 +1,12 @@
+[package]
+name = "antelope-firewall"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+antelope-firewall-lib = { path = "../antelope-firewall-lib/" }
+clap = { version = "4.3.11", features = ["derive"] }
+env_logger = "0.10.0"
+log = "0.4.20"
+tokio = { version = "1.28.2", features = ["full"] }
+toml = "0.7.6"

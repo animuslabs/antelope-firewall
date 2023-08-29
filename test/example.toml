@@ -1,0 +1,182 @@
+# For help with toml format: https://toml.io/en/v1.0.0
+
+# routing_mode: "round_robin" or "least_connections" or "random"
+# round robin will send requests to each 
+routing_mode = "round_robin"
+
+# address: String
+# Socket the firewall will listen on
+# Leave as 0.0.0.0:3000 to bind on port 3000 on all addresses assigned to this machine, including localhost
+address = "0.0.0.0:3000"
+
+# prometheus_address: Option<String>
+# Socket that prometheus will run on
+# Leave as 0.0.0.0:3001 to bind on port 3000 on all addresses assigned to this machine, including localhost
+# Omit to not launch a prometheus process
+prometheus_address = "0.0.0.0:3001"
+
+# Healthcheck will run a get_info request every `interval` seconds on all nodes to determine
+# which nodes are in sync. If a node has a head_block_time more than `grace_period` seconds
+# older than the current system time, that node will not be considered as a valid node
+# to route requests to. Healthcheck will then keep making requests at the same interval
+# to determine if the node re-syncs.
+#
+# This is an optional field. If you remove or comment out the below table healthcheck will
+# not run.
+[healthcheck]
+# interval: non-zero Integer
+interval = 15
+# grace_period: Integer
+grace_period = 5
+
+[filter]
+# block_contracts: Array<String>
+# block transactions that contain an action sent to an account in the below array 
+# note: Mutually exclusive with allow_only_accounts. At least one should be omitted
+block_contracts = ["eosio"]
+# block_ips: Array<String>
+# block requests that originate from the below IP list.
+# This can be left out
+block_ips = []
+# allow_only_accounts = Array<String>
+# only allow requests that contain an action sent to an account in the below array
+# note: Mutually exclusive with block_contracts. At least one should be omitted
+allow_only_accounts = ["mjurenka.gm"]
+
+# Every table in the ratelimit array constitutes a new rate limiter that will be applied in
+# consecutive order. Requests must pass all defined ratelimiters to make it through.
+#
+# NOTE: Toml tables with a key surrounded by two square brackets are analagous to an array
+# of objects in json. i.e.
+#
+# [[foo]]
+# bar = "abc"
+#
+# [[foo]]
+# bar = "def"
+# 
+# is roughly equivalent to
+# {
+#   "foo": [
+#     { "bar": "abc" },
+#     { "bar": "def" }
+#   ]
+# }
+# 
+
+# Example of a ratelimiter that limits any IP to only be able to send
+# 10 requests every 60 seconds.
+[[ratelimit]]
+# name: String
+# Name of ratelimiter, used for logging and prometheus metrics.
+name = "base"
+
+# limit_on: "attempt" or "failure"
+# "attempt" increments the ratelimit count on incoming request, failure increments the count when
+# a request is forwarded to and end node and comes back with an error http status
+limit_on = "attempt"
+
+# bucket_type: "ip" or "contract" or "authorizer"
+# Represents the ratelimit bucket. "ip" sets the bucket to be the request IP. "contract"
+# is for all accounts in an action list, and "authorizer" is for all accounts in an authorization
+# list. For "contract" and "authorizer", the ratelimiter needs to pass for all accounts and all authorizers
+# in a transaction, not just the first one.
+bucket_type = "ip"
+
+# limit: Integer
+# We use the sliding window algorithm to ensure that (on average) the value of the
+# ratelimiter will not go over `limit` for a given window of time. Will not allow more than
+# 2*`limit` for any given window. 
+# https://medium.com/@avocadi/rate-limiter-sliding-window-counter-7ec08dbe21d6
+limit = 10
+
+# window_duration: non-zero Integer
+# Duration of the window in seconds.
+window_duration = 60
+
+
+# Example of a ratelimiter that limits any given transaction authorizer to only
+# be able to send a request if they have not had more than 2 failed transactions
+# every 60 seconds.
+[[ratelimit]]
+name = "failure"
+limit_on = "failure"
+bucket_type = "authorizer"
+limit = 2
+window_duration = 60
+# If select_accounts is specified, the ratelimiter will only apply for accounts
+# in the list. If not specified, the ratelimiter will apply to all accounts.
+select_accounts = ["mjurenka.gm", "eosio"]
+
+# Example of a ratelimiter that limits table requests of a particular table to only 30 ever minute.
+[[ratelimit]]
+name = "table"
+limit_on = "attempt"
+bucket_type = "table"
+tables = [["eosio", "voters"]]
+limit = 30
+window_duration = 60
+# If select_accounts is specified, the ratelimiter will only apply for tables
+# on contracts in the list. If not specified, the ratelimiter will apply to all tables.
+# This applies to /get_table_rows and /get_tables_by_scope
+select_accounts = ["mjurenka.gm", "eosio"]
+
+
+# List of nodes that requests that mutate blockchain state can be forwarded to
+#
+# Requests to the following endpoints can be forwarded to nodes in this list:
+#
+# /v1/chain/push_transaction
+# /v1/chain/send_transaction
+# /v1/chain/push_transactions
+# /v1/chain/send_transaction2
+# /v1/chain/compute_transaction
+# /v1/chain/send_read_only_transaction
+# /v1/chain/push_block
+#
+[[push_nodes]]
+# name: String
+# used for logging
+name = "push"
+
+# url: String
+# base url that requests will be forwarded to. Please put without the ending /
+url = "https://eos.greymass.com"
+
+# weight: non-zero Integer
+# Can be left out, will default to 1
+weight = 1
+
+
+# List of nodes that requests that only read blockchain state can be forwarded to
+#
+# Requests to the following endpoints can be forwarded to nodes in this list:
+# 
+# /v1/chain/get_account
+# /v1/chain/get_block
+# /v1/chain/get_block_info
+# /v1/chain/get_info
+# /v1/chain/get_block_header_state
+# /v1/chain/get_abi
+# /v1/chain/get_currency_balance
+# /v1/chain/get_currency_stats
+# /v1/chain/get_required_keys
+# /v1/chain/get_producers
+# /v1/chain/get_raw_code_and_abi
+# /v1/chain/get_scheduled_transactions
+# /v1/chain/get_table_by_scope
+# /v1/chain/get_table_rows
+# /v1/chain/get_code
+# /v1/chain/get_raw_abi
+# /v1/chain/get_activated_protocol_features
+# /v1/chain/get_accounts_by_authorizers
+# /v1/chain/get_transaction_status
+# /v1/chain/get_producer_schedule
+#
+[[get_nodes]]
+name = "get"
+url = "https://eos.greymass.com"
+
+[[get_nodes]]
+name = "get"
+url = "https://mainnet.genereos.io"

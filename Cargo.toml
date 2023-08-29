@@ -1,0 +1,6 @@
+[workspace]
+
+members = [
+    "antelope-firewall",
+    "antelope-firewall-lib",
+]

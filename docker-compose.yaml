@@ -1,0 +1,13 @@
+version: '3.8'
+services:
+  antelope-firewall:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - CONFIG_PATH=/etc/antelope-firewall/config_main.toml
+    volumes:
+      - /home/antelopeio/antelope-firewall/config_main.toml:/etc/antelope-firewall/config_main.toml
+    ports:
+      - 3000:3000
+      - 3001:3001
