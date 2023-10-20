@@ -42,114 +42,109 @@ One example of a setup would be to have HAProxy to deal with SSL certificate and
 First Install docker and clone antelope-firewall repository.  
 You will find predifined Dockerfile that will be needed to build the container.  
 Next, setup your docker-compose.yml file and make it work with your local environment.  
-For example (comments are done only to describe functionality they should not be included in the yml file):  
+Description of options in the docker-compose file (comments are done only to describe functionality they should not be included in the yml file):  
 
-version: '3.8'
-services:
-  antelope-firewall:
-    build: 
-      context: . /// this points to the local directory. it's important to run docker compose build in the root of the antelope-firewall repository
-      dockerfile: Dockerfile /// This is the Dockerfile that will be used to build the container
-    environment:
-      - CONFIG_PATH=/etc/antelope-firewall/config_main.toml /// configuration file for the firewall
-    volumes:
-      - /home/antelopeio/antelope-firewall/config_main.toml:/etc/antelope-firewall/config_main.toml /// configuration file for the firewall mounted from where you cloned your repository
-    ports:
-      - 3000:3000 /// default port for the firewall if you want to change this you will have to edit the Dockerfile and config_main.toml 
-      - 3001:3001 /// default port for the prometheus exporter if you want to change this you will have to edit the Dockerfile and config_main.toml 
+version: '3.8'  
+services:  
+  antelope-firewall:  
+    build:   
+      context: . /// this points to the local directory. it's important to run docker compose build in the root of the antelope-firewall repository  
+      dockerfile: Dockerfile /// This is the Dockerfile that will be used to build the container  
+    environment:  
+      - CONFIG_PATH=/etc/antelope-firewall/config_main.toml /// configuration file for the firewall  
+    volumes:  
+      - /home/antelopeio/antelope-firewall/config_main.toml:/etc/antelope-firewall/config_main.toml /// configuration file for the firewall mounted from where you cloned your repository  
+    ports:  
+      - 3000:3000 /// default port for the firewall if you want to change this you will have to edit the Dockerfile and config_main.toml   
+      - 3001:3001 /// default port for the prometheus exporter if you want to change this you will have to edit the Dockerfile and config_main.toml   
   
 	  
-### config_main.toml file example (comments are done only to describe functionality they should not be included in the toml file) - this is a 3 node setup
+### config_main.toml file description (comments are done only to describe functionality they should not be included in the toml file) - this is a 3 node setup
 
-routing_mode = "round_robin" // setup how you want to distribute trxes | requests
-address = "0.0.0.0:3000" // this defines the port and that traffic can be accepted from outside
-prometheus_address = "0.0.0.0:3001" // allow stats to be collected by your prometheus instance
-
-
-// Healthcheck will run a get_info request every `interval` seconds on all nodes to determine
-// which nodes are in sync. If a node has a head_block_time more than `grace_period` seconds
-// older than the current system time, that node will not be considered as a valid node
-// to route requests to. Healthcheck will then keep making requests at the same interval
-// to determine if the node re-syncs.
-[healthcheck]
-interval = 15
-grace_period = 5
+routing_mode = "round_robin" // setup how you want to distribute trxes | requests  
+address = "0.0.0.0:3000" // this defines the port and that traffic can be accepted from outside  
+prometheus_address = "0.0.0.0:3001" // allow stats to be collected by your prometheus instance  
 
 
+// Healthcheck will run a get_info request every `interval` seconds on all nodes to determine  
+// which nodes are in sync. If a node has a head_block_time more than `grace_period` seconds  
+// older than the current system time, that node will not be considered as a valid node  
+// to route requests to. Healthcheck will then keep making requests at the same interval  
+// to determine if the node re-syncs.  
+[healthcheck]  
+interval = 15  
+grace_period = 5  
 
-[filter]
-block_contracts = ["eosio"] // in this example it will block any transactions sent to this account, you can enter more than one 
-block_ips = []  // block requests that originate from the below IP list.
-allow_only_accounts = ["token.boid"] // only allow requests that contain an action sent to an account in the below array, you can enter more than one 
+[filter]  
+block_contracts = ["eosio"] // in this example it will block any transactions sent to this account, you can enter more than one   
+block_ips = []  // block requests that originate from the below IP list.  
+allow_only_accounts = ["token.boid"] // only allow requests that contain an action sent to an account in the below array, you can enter more than one   
 
-// you can have more than one ratelimiter setup
+// you can have more than one ratelimiter setup  
+  
+// Example of a ratelimiter that limits any IP to only be able to send  
+// 10 requests every 60 seconds.  
+[[ratelimit]]   
+name = "base" // Name of ratelimiter, used for logging and prometheus metrics.  
+limit_on = "attempt" // "attempt" increments the ratelimit count on incoming request, failure increments the count when a request is forwarded to and end node and comes back with an error http status  
+bucket_type = "ip" /// "ip" sets the bucket to be the request IP.  
+limit = 50  
+window_duration = 60  
 
-// Example of a ratelimiter that limits any IP to only be able to send
-// 10 requests every 60 seconds.
-[[ratelimit]] 
-name = "base" // Name of ratelimiter, used for logging and prometheus metrics.
-limit_on = "attempt" // "attempt" increments the ratelimit count on incoming request, failure increments the count when a request is forwarded to and end node and comes back with an error http status
-bucket_type = "ip" /// "ip" sets the bucket to be the request IP.
-limit = 50
-window_duration = 60
+// Example of a ratelimiter that limits any given transaction authorizer to only  
+// be able to send a request if they have not had more than 2 failed transactions  
+// every 60 seconds.  
+[[ratelimit]]  
+name = "failure" // Name of ratelimiter, used for logging and prometheus metrics.  
+limit_on = "failure"  
+bucket_type = "authorizer" // "authorizer" is for all accounts in an authorization list  
+limit = 2  
+window_duration = 60  
+select_accounts = []  
 
+// Example of a ratelimiter that limits table requests of a particular table to only 30 ever minute.  
+[[ratelimit]]  
+name = "table" // Name of ratelimiter, used for logging and prometheus metrics.  
+limit_on = "attempt"  
+bucket_type = "table"  
+tables = [["eosio", "voters"]]  
+limit = 30  
+window_duration = 60  
+// If select_accounts is specified, the ratelimiter will only apply for tables  
+// on contracts in the list. If not specified, the ratelimiter will apply to all tables.  
+// This applies to /get_table_rows and /get_tables_by_scope  
+select_accounts = []  
 
-// Example of a ratelimiter that limits any given transaction authorizer to only
-// be able to send a request if they have not had more than 2 failed transactions
-// every 60 seconds.
-[[ratelimit]]
-name = "failure" // Name of ratelimiter, used for logging and prometheus metrics.
-limit_on = "failure"
-bucket_type = "authorizer" // "authorizer" is for all accounts in an authorization list
-limit = 2
-window_duration = 60
-select_accounts = []
-
-
-// Example of a ratelimiter that limits table requests of a particular table to only 30 ever minute.
-[[ratelimit]]
-name = "table" // Name of ratelimiter, used for logging and prometheus metrics.
-limit_on = "attempt"
-bucket_type = "table"
-tables = [["eosio", "voters"]]
-limit = 30
-window_duration = 60
-// If select_accounts is specified, the ratelimiter will only apply for tables
-// on contracts in the list. If not specified, the ratelimiter will apply to all tables.
-// This applies to /get_table_rows and /get_tables_by_scope
-select_accounts = []
-
-#### this is where you setup your nodes
-[[push_nodes]]
-name = "Node-1"
-url = "http://192.168.0.110:8888"
-routing_weight = 1
-
-[[push_nodes]]
-name = "Node-2"
-url = "http://192.168.0.113:8888"
-routing_weight = 1
-
-[[push_nodes]]
-name = "Node-3"
-url = "http://192.168.0.114:8888"
-routing_weight = 1
-
-[[get_nodes]]
-name = "Node-1"
-url = "http://192.168.0.110:8888"
-
-[[get_nodes]]
-name = "Node-2"
-url = "http://192.168.0.113:8888"
-
-[[get_nodes]]
-name = "Node-3"
-url = "http://192.168.0.114:8888"
-
-
-#### build the image and run
-Build the docker image  
+#### this is where you setup your nodes  
+[[push_nodes]]  
+name = "Node-1"  
+url = "http://192.168.0.110:8888"  
+routing_weight = 1  
+  
+[[push_nodes]]  
+name = "Node-2"  
+url = "http://192.168.0.113:8888"  
+routing_weight = 1  
+  
+[[push_nodes]]  
+name = "Node-3"  
+url = "http://192.168.0.114:8888"  
+routing_weight = 1  
+  
+[[get_nodes]]  
+name = "Node-1"  
+url = "http://192.168.0.110:8888"  
+  
+[[get_nodes]]  
+name = "Node-2"  
+url = "http://192.168.0.113:8888"  
+  
+[[get_nodes]]  
+name = "Node-3"  
+url = "http://192.168.0.114:8888"  
+  
+#### build the image and run  
+Build the docker image    
 ```
 docker compose build
 ```
