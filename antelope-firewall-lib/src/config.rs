@@ -190,7 +190,9 @@ pub async fn from_config(config: Config) -> Result<AntelopeFirewall, String> {
                 let selector = Selector::new("$.unpacked_trx.actions.*.account").unwrap();
                 let contract_guard = BLOCKED_CONTRACTS.read().await;
                 let allow_contract_guard = ALLOW_ONLY_CONTRACTS.read().await;
-                if contract_guard.is_empty() {
+                if contract_guard.is_empty() && allow_contract_guard.is_empty() {
+                    return true
+                } else if contract_guard.is_empty() {
                     return selector.find(&body).into_iter()
                         .filter_map(|found| found.as_str().map(|account| account.to_string()))
                         .all(|account| {

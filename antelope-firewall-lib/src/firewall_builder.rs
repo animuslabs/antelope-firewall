@@ -27,7 +27,7 @@ use hyper::service::service_fn;
 use hyper::{Method, Request, Response};
 
 use http_body_util::combinators::BoxBody;
-use http_body_util::BodyExt;
+use http_body_util::{BodyExt, Full};
 use itertools::FoldWhile::{Continue, Done};
 
 lazy_static::lazy_static! {
@@ -154,36 +154,51 @@ impl AntelopeFirewall {
         if max > 1024 * 64 {
             let mut resp = Response::new(full("Body too big"));
             *resp.status_mut() = hyper::StatusCode::PAYLOAD_TOO_LARGE;
-            err!("Request from {} too large", ip);
+            info!("Request from {} too large", ip);
             return Ok(resp);
         }
 
         let request_info = Arc::new(RequestInfo::new(parts.headers.clone(), parts.uri.clone(), ip));
         let body_bytes = match parts.method {
-            Method::POST => body
-                .collect()
-                .await
-                .map_err(|e| ParseBodyFailed(e.to_string()))?
-                .to_bytes(),
+            Method::POST => {
+                let body_bytes_result = body
+                    .collect()
+                    .await;
+                match body_bytes_result {
+                    Ok(collected) => collected.to_bytes(),
+                    Err(e) => {
+                        info!("Error occurred while parsing request body: {}", e.to_string());
+                        return Ok(get_error_response(full("Error occurred while parsing request body.")))
+                    }
+                }
+            },
             _ => Bytes::new(),
         };
         
         let body_json = Arc::new(
             match parts.method {
+                Method::POST if body_bytes.len() == 0 => serde_json::Value::Null,
                 Method::POST => {
-                    let mut parsed = serde_json::from_slice::<serde_json::Value>(&body_bytes)
-                        .map_err(|e| ParseBodyFailed(e.to_string()))?;
-                    if let Some(m) = parsed.as_object_mut() {
-                        if let Some(hex) = m.get_mut("packed_trx")
-                            .and_then(|e| e.as_str())
-                            .and_then(|s| hex::decode(s).ok()) {
-                            if let Some(serialized) = crate::de::from_bytes::<Transaction>(&hex[..]).ok()
-                                .and_then(|trx| serde_json::to_value(&trx).ok()) {
-                                m.insert("unpacked_trx".into(), serialized);
+                    match serde_json::from_slice::<serde_json::Value>(&body_bytes) {
+                        Ok(mut parsed) => {
+                            if let Some(m) = parsed.as_object_mut() {
+                                if let Some(hex) = m.get_mut("packed_trx")
+                                    .and_then(|e| e.as_str())
+                                    .and_then(|s| hex::decode(s).ok()) {
+                                    if let Some(serialized) = crate::de::from_bytes::<Transaction>(&hex[..]).ok()
+                                        .and_then(|trx| serde_json::to_value(&trx).ok()) {
+                                        m.insert("unpacked_trx".into(), serialized);
+                                    }
+                                }
                             }
+                            parsed
+
+                        },
+                        Err(e) => {
+                            info!("Unable to parse POST request body as JSON: {}", e);
+                            return Ok(get_error_response(full("Unable to parse body as JSON.")))
                         }
                     }
-                    parsed
                 },
                 _ => serde_json::Value::Null
             }
@@ -316,60 +331,75 @@ impl AntelopeFirewall {
 
         info!("Forwarding {}'s request to {} to {}", ip, parts.uri, url);
         let client = reqwest::Client::new();
-        let node_res = client
+        let node_result = client
             .post(url.clone())
             .headers(headers)
             .body(body_bytes)
             .send()
-            .await
-            .unwrap();
-        let node_status = node_res.status();
+            .await;
 
-        {
-            let guard = MATCHING_COUNTERS.read().await;
-            let (_, success_counter, client_error_counter, server_error_counter) = guard.get(&prometheus_url_name).unwrap();
-            if node_status.is_success() {
-                SUCCESS_NODE_RESPONSES.inc();
-                success_counter.inc();
-            } else if node_status.is_client_error() {
-                CLIENT_ERROR_NODE_RESPONSES.inc();
-                client_error_counter.inc();
-            } else if node_status.is_server_error() {
-                SERVER_ERROR_NODE_RESPONSES.inc();
-                server_error_counter.inc();
-            }
-        }
+        match node_result {
+            Ok(response) => {
+                let node_status = response.status();
 
-        // Respond to the client
-        let mut client_res = Response::builder().status(node_res.status());
-        client_res
-            .headers_mut()
-            .map(|h| h.clone_from(node_res.headers()));
+                {
+                    let guard = MATCHING_COUNTERS.read().await;
+                    let (_, success_counter, client_error_counter, server_error_counter) = guard.get(&prometheus_url_name).unwrap();
+                    if node_status.is_success() {
+                        SUCCESS_NODE_RESPONSES.inc();
+                        success_counter.inc();
+                    } else if node_status.is_client_error() {
+                        CLIENT_ERROR_NODE_RESPONSES.inc();
+                        client_error_counter.inc();
+                    } else if node_status.is_server_error() {
+                        SERVER_ERROR_NODE_RESPONSES.inc();
+                        server_error_counter.inc();
+                    }
+                }
 
-        let response_bytes = node_res.bytes().await.unwrap();
-        let response_json = Arc::new(
-            (
-                serde_json::from_slice::<serde_json::Value>(&response_bytes)
-                    .map_err(|e| ParseResponseBodyFailed(e.to_string()))?,
-                node_status
-            )
-        );
+                // Respond to the client
+                let mut client_res = Response::builder().status(response.status());
+                client_res
+                    .headers_mut()
+                    .map(|h| h.clone_from(response.headers()));
 
-        // Update any ratelimiters that need to be notified on failure
-        for ratelimiter in &self.ratelimiters {
-            if !ratelimiter.increment_mode.should_run_before_request() {
-                ratelimiter
-                    .post_increment(
-                        Arc::clone(&request_info),
-                        Arc::clone(&body_json),
-                        Arc::clone(&response_json),
+                let response_bytes = response.bytes().await.unwrap();
+                
+                let returned_value = match serde_json::from_slice::<serde_json::Value>(&response_bytes) {
+                    Ok(val) => val,
+                    Err(e) => {
+                        info!("Unable to forward request to url: {}, received error: {}", url, e.to_string());
+                        return Ok(get_error_response(full("Error forwarding request.")))
+                    }
+                };
+                let response_json = Arc::new(
+                    (
+                        returned_value,
+                        node_status
                     )
-                    .await;
-            }
-        }
-        info!("Sending response for {}'s request to {}", ip, parts.uri);
+                );
 
-        let final_response = client_res.body(full(response_bytes)).unwrap();
-        Ok(final_response)
+                // Update any ratelimiters that need to be notified on failure
+                for ratelimiter in &self.ratelimiters {
+                    if !ratelimiter.increment_mode.should_run_before_request() {
+                        ratelimiter
+                            .post_increment(
+                                Arc::clone(&request_info),
+                                Arc::clone(&body_json),
+                                Arc::clone(&response_json),
+                            )
+                            .await;
+                    }
+                }
+                info!("Sending response for {}'s request to {}", ip, parts.uri);
+
+                let final_response = client_res.body(full(response_bytes)).unwrap();
+                Ok(final_response)
+            },
+            Err(e) => {
+                info!("Unable to forward request to url: {}, received error: {}", url, e.to_string());
+                Ok(get_error_response(full("Error forwarding request.")))
+            },
+        }
     }
 }

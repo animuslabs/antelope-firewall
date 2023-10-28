@@ -32,7 +32,7 @@ grace_period = 5
 [filter]
 # block_contracts: Array<String>
 # block transactions that contain an action sent to an account in the below array 
-# note: Mutually exclusive with allow_only_accounts. At least one should be omitted
+# note: Mutually exclusive with allow_only_accounts. At least one should be empty
 block_contracts = ["eosio"]
 # block_ips: Array<String>
 # block requests that originate from the below IP list.
@@ -40,7 +40,7 @@ block_contracts = ["eosio"]
 block_ips = []
 # allow_only_accounts = Array<String>
 # only allow requests that contain an action sent to an account in the below array
-# note: Mutually exclusive with block_contracts. At least one should be omitted
+# note: Mutually exclusive with block_contracts. At least one should be empty
 allow_only_accounts = ["token.boid"]
 
 # Every table in the ratelimit array constitutes a new rate limiter that will be applied in
