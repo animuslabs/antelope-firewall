@@ -330,7 +330,9 @@ impl AntelopeFirewall {
         headers.insert("X-Forwarded-For", ip.to_string().parse().unwrap());
 
         info!("Forwarding {}'s request to {} to {}", ip, parts.uri, url);
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::limited(50))
+            .build().unwrap();
         let node_result = client
             .post(url.clone())
             .headers(headers)
@@ -363,12 +365,14 @@ impl AntelopeFirewall {
                     .headers_mut()
                     .map(|h| h.clone_from(response.headers()));
 
+
+                let status = response.status();
                 let response_bytes = response.bytes().await.unwrap();
                 
                 let returned_value = match serde_json::from_slice::<serde_json::Value>(&response_bytes) {
                     Ok(val) => val,
                     Err(e) => {
-                        info!("Unable to forward request to url: {}, received error: {}", url, e.to_string());
+                        info!("Unable to forward request to url: {}, received status: {}, encountered error: {}", url, status, e.to_string());
                         return Ok(get_error_response(full("Error forwarding request.")))
                     }
                 };
@@ -397,7 +401,7 @@ impl AntelopeFirewall {
                 Ok(final_response)
             },
             Err(e) => {
-                info!("Unable to forward request to url: {}, received error: {}", url, e.to_string());
+                info!("Unable to forward request to url: {}, encountered error: {}", url, e.to_string());
                 Ok(get_error_response(full("Error forwarding request.")))
             },
         }
