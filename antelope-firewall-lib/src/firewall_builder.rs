@@ -373,6 +373,8 @@ impl AntelopeFirewall {
                     Ok(val) => val,
                     Err(e) => {
                         info!("Unable to forward request to url: {}, received status: {}, encountered error: {}", url, status, e.to_string());
+                        //let s = response_bytes.iter().map(|b| *b as char).collect::<String>().into()
+                        //info!("First 100 chars of error response: {}", s.chars().take(100).collect::<String>());
                         return Ok(get_error_response(full("Error forwarding request.")))
                     }
                 };

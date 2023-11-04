@@ -22,12 +22,12 @@ prometheus_address = "0.0.0.0:3001"
 # to determine if the node re-syncs.
 #
 # This is an optional field. If you remove or comment out the below table healthcheck will
-# not run.
-[healthcheck]
+# not run. If you want to run healthcheck, uncomment the below table
+#[healthcheck]
 # interval: non-zero Integer
-interval = 15
+#interval = 15
 # grace_period: Integer
-grace_period = 5
+#grace_period = 5
 
 [filter]
 # block_contracts: Array<String>
@@ -176,7 +176,3 @@ weight = 1
 [[get_nodes]]
 name = "get"
 url = "https://eos.greymass.com"
-
-[[get_nodes]]
-name = "get"
-url = "https://mainnet.genereos.io"
