@@ -327,10 +327,15 @@ impl AntelopeFirewall {
 
         // Send the request
         let mut headers = parts.headers;
-        headers.insert("X-Forwarded-For", ip.to_string().parse().unwrap());
+        //headers.insert("X-Forwarded-For", ip.to_string().parse().unwrap());
+        if let Some(host) = url.host_str() {
+            headers.insert("Host", host.parse().unwrap());
+        }
 
         info!("Forwarding {}'s request to {} to {}", ip, parts.uri, url);
         let client = reqwest::Client::builder()
+            .deflate(true)
+            .gzip(true)
             .redirect(reqwest::redirect::Policy::limited(50))
             .build().unwrap();
         let node_result = client

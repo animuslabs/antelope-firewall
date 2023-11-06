@@ -6,8 +6,8 @@ use prometheus_exporter::prometheus::{register_counter, core::{GenericCounter, A
 lazy_static! {
     pub static ref REQUESTS_RECEIVED: GenericCounter<AtomicF64> = register_counter!("reqs_received", "Total Requests Received").unwrap();
     pub static ref REQUESTS_FAILED_TO_ROUTE: GenericCounter<AtomicF64> = register_counter!("reqs_failed_to_route", "Requests Unable to be Routed Successfully").unwrap();
-    pub static ref CLIENT_ERROR_NODE_RESPONSES: GenericCounter<AtomicF64> = register_counter!("node_responses_error", "Total node responses that had 4** errors").unwrap();
-    pub static ref SERVER_ERROR_NODE_RESPONSES: GenericCounter<AtomicF64> = register_counter!("node_responses_error", "Total node responses that had 5** errors").unwrap();
+    pub static ref CLIENT_ERROR_NODE_RESPONSES: GenericCounter<AtomicF64> = register_counter!("node_responses_client_error", "Total node responses that had 4** errors").unwrap();
+    pub static ref SERVER_ERROR_NODE_RESPONSES: GenericCounter<AtomicF64> = register_counter!("node_responses_server_error", "Total node responses that had 5** errors").unwrap();
     pub static ref SUCCESS_NODE_RESPONSES: GenericCounter<AtomicF64> = register_counter!("node_responses_success", "Total node responses that returned success").unwrap();
 }
 
