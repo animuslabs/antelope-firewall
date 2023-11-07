@@ -181,15 +181,23 @@ impl AntelopeFirewall {
                 Method::POST => {
                     match serde_json::from_slice::<serde_json::Value>(&body_bytes) {
                         Ok(mut parsed) => {
-                            if let Some(m) = parsed.as_object_mut() {
-                                if let Some(hex) = m.get_mut("packed_trx")
+                            if let Some(root) = parsed.as_object_mut() {
+                                let mut cloned = root.clone();
+                                let trx_root_opt = if let Some(m) = root.get_mut("transaction") {
+                                    m.as_object_mut()
+                                } else {
+                                    Some(&mut cloned)
+                                };
+
+                                if let Some(hex) = trx_root_opt.and_then(|t| t.get_mut("packed_trx"))
                                     .and_then(|e| e.as_str())
                                     .and_then(|s| hex::decode(s).ok()) {
                                     if let Some(serialized) = crate::de::from_bytes::<Transaction>(&hex[..]).ok()
                                         .and_then(|trx| serde_json::to_value(&trx).ok()) {
-                                        m.insert("unpacked_trx".into(), serialized);
+                                        root.insert("unpacked_trx".into(), serialized);
                                     }
                                 }
+                                
                             }
                             parsed
 
