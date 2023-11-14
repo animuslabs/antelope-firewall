@@ -155,7 +155,8 @@ pub async fn from_config(config: Config) -> Result<AntelopeFirewall, String> {
     );
 
     if let Some(filter_config) = config.filter {
-        if filter_config.block_contracts.is_some() && filter_config.allow_only_contracts.is_some() {
+        if (filter_config.block_contracts.clone().map_or(0, |v| v.len()) > 0) &&
+            (filter_config.allow_only_contracts.clone().map_or(0, |v| v.len()) > 0) {
             return Err("Cannot block and allow contracts at the same time.".into());
         }
 
