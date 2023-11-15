@@ -78,7 +78,7 @@ grace_period = 5
 [filter]  
 block_contracts = ["eosio"] // in this example it will block any transactions sent to this account, you can enter more than one   
 block_ips = []  // block requests that originate from the below IP list.  
-allow_only_accounts = ["token.boid"] // only allow requests that contain an action sent to an account in the below array, you can enter more than one   
+allow_only_contracts = ["token.boid"] // only allow requests that contain an action sent to an account in the below array, you can enter more than one   
 
 // you can have more than one ratelimiter setup  
   
