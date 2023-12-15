@@ -15,7 +15,7 @@ lazy_static! {
         "/get_raw_code_and_abi", "/get_scheduled_transaction", "/get_table_by_scope",
         "/get_table_rows", "/get_kv_table_rows", "/abi_json_to_bin", "/abi_bin_to_json",
         "/get_code", "/get_raw_abi", "/get_activated_protocol_features",
-        "/get_accounts_by_authorizers"
+        "/get_accounts_by_authorizers", "/send_transaction2", "/compute_transaction"
     ].iter().map(|s| s.to_string()).collect();
     
     pub static ref PATHS_MAP: HashMap<String, HashSet<String>> = {
@@ -26,7 +26,7 @@ lazy_static! {
             "get_raw_code_and_abi", "get_scheduled_transaction", "get_table_by_scope",
             "get_table_rows", "get_kv_table_rows", "abi_json_to_bin", "abi_bin_to_json",
             "get_code", "get_raw_abi", "get_activated_protocol_features",
-            "get_accounts_by_authorizers"
+            "get_accounts_by_authorizers", "send_transaction2", "compute_transaction"
         ].iter().map(|s| s.to_string()).collect();
 
         let get: HashSet<String> = [
@@ -36,11 +36,11 @@ lazy_static! {
             "get_raw_code_and_abi", "get_scheduled_transaction", "get_table_by_scope",
             "get_table_rows", "get_kv_table_rows", "abi_json_to_bin", "abi_bin_to_json",
             "get_code", "get_raw_abi", "get_activated_protocol_features",
-            "get_accounts_by_authorizers"
+            "get_accounts_by_authorizers", "compute_transaction"
         ].iter().map(|s| s.to_string()).collect();
         
         let push: HashSet<String> = [
-            "send_transaction", "push_transactions", "push_transaction"
+            "send_transaction", "push_transactions", "push_transaction", "send_transaction2"
         ].iter().map(|s| s.to_string()).collect();
 
         let mut map: HashMap<String, HashSet<String>> = HashMap::new();
