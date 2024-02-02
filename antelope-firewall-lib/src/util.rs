@@ -42,3 +42,28 @@ pub fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, hyper::Error> {
         .map_err(|never| match never {})
         .boxed()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn ratelimit_response_valid() {
+        assert_eq!(get_ratelimit_response(0).status(), 429);
+    }
+
+    #[tokio::test]
+    async fn blocked_response_valid() {
+        assert_eq!(get_blocked_response().status(), 403);
+    }
+
+    #[tokio::test]
+    async fn options_response_valid() {
+        assert_eq!(get_options_response().status(), 200);
+    }
+
+    #[tokio::test]
+    async fn error_response_valid() {
+        assert_eq!(get_error_response(full("Internal Server Error")).status(), 500);
+    }
+}

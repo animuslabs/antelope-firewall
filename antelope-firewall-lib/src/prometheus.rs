@@ -20,3 +20,13 @@ pub fn start_prometheus_exporter(socket_addr: SocketAddr) -> Result<(), String> 
         .map(|_| ())
         .map_err(|e| e.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn starts() {
+        start_prometheus_exporter("127.0.0.0:8099".parse().unwrap()).unwrap();
+    }
+}
