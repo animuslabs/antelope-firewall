@@ -226,7 +226,7 @@ pub async fn from_config(config: Config) -> Result<AntelopeFirewall, String> {
             }
         }
 
-        let mut select_accounts_guard = SELECT_ACCOUNTS.write().await;
+        let select_accounts_guard = SELECT_ACCOUNTS.write().await;
         firewall = firewall.add_ratelimiter(RateLimiter::new(
             ratelimit.name,
             Box::new(|_| Box::pin(async { true })),
@@ -349,4 +349,49 @@ pub async fn from_config(config: Config) -> Result<AntelopeFirewall, String> {
     }
 
     Ok(firewall)
+}
+
+#[cfg(test)]
+mod tests {
+    use core::time;
+    use std::thread;
+
+    use chrono::Utc;
+    use hyper::StatusCode;
+    use reqwest::Client;
+    use serde_json::from_str;
+
+    use super::*;
+    
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn parses_body() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        let default_config = include_str!("../test-configs/basic.toml");
+        let config = toml::from_str::<Config>(default_config).expect("Default config contains an error");
+        let firewall = from_config(config).await.expect("Default config unable to build");
+
+        tokio::spawn(async move {
+            let err = firewall.build().run().await;
+            panic!("Error!: {:?}", err);
+        });
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+        let client = Client::new();
+        let result = client.post("http://127.0.0.1:3000/v1/chain/get_block_info")
+            .body("{\"block_num\":100}")
+            .send()
+            .await;
+        let response = result.expect("Encountered error getting info");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.text().await.expect("Error while getting bytes");
+        let json_body = from_str::<serde_json::Value>(&body).expect("");
+        if let Some(id) = json_body.as_object().and_then(|map| map.get("id").and_then(|o| o.as_str())) {
+            assert_eq!(id, "0000006492871283c47f6ef57b00cf534628eb818c34deb87ea68a3557254c6b");
+        } else {
+            panic!("invalid body")
+        }
+    }
+    
 }

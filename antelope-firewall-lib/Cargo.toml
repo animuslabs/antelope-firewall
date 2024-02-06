@@ -23,6 +23,8 @@ jsonpath = "0.1.1"
 log = "0.4.20"
 mock_instant = "0.3.1"
 mockito = "1.2.0"
+env_logger = "0.10.0"
+serial_test = "3.0.0"
 
 [lib]
 name = "antelope_firewall_lib"

@@ -790,7 +790,7 @@ impl<'de> Visitor<'de> for VaruintVisitor {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Varuint {
     value: u32
 }
@@ -804,6 +804,12 @@ impl Varuint {
 impl From<Varuint> for u32 {
     fn from(value: Varuint) -> Self {
         value.value
+    }
+}
+
+impl From<u32> for Varuint {
+    fn from(value: u32) -> Self {
+        Varuint { value }
     }
 }
 
@@ -824,7 +830,7 @@ impl Serialize for Varuint {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Name {
     value: String
 }
@@ -832,6 +838,12 @@ pub struct Name {
 impl Name {
     fn new(value: String) -> Self {
         Name { value }
+    }
+}
+
+impl From<&str> for Name {
+    fn from(value: &str) -> Self {
+        Name { value: value.into() }
     }
 }
 
@@ -866,21 +878,6 @@ pub fn name_to_string(n: u64) -> String {
     result.trim_end_matches(".").to_string()
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::de::name_to_string;
-
-    fn parse_u64(x: String) -> u64 {
-        let packed_bytes = hex::decode(x).unwrap();
-        let mut le_bytes = [0,0,0,0,0,0,0,0];
-        le_bytes.copy_from_slice(&packed_bytes[..]);
-        u64::from_le_bytes(le_bytes)
-    }
-    #[test]
-    fn it_works() {
-        println!("hello hello{:?}", name_to_string(parse_u64("00a6823403ea3055".into())));
-    }
-}
 
 impl<'de> Deserialize<'de> for Name {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Name, D::Error>
@@ -907,7 +904,7 @@ impl<'de> Deserialize<'de> for Name {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
 pub struct Transaction {
     pub expiration: u32,
     pub ref_block_num: u16,
@@ -919,7 +916,7 @@ pub struct Transaction {
     pub actions: Vec<Action>,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
 pub struct Action {
     pub account: Name,
     pub name: Name,
@@ -927,8 +924,363 @@ pub struct Action {
     pub data: Vec<u8>
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
 pub struct Authorization {
     pub actor: Name,
     pub permission: Name
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{DateTime, NaiveDateTime, Utc};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn parses_one() {
+        // https://waxblock.io/transaction/95f87c0f10179b860a4e46f1960d8483e4c6be31335775fef6dd1f80ad98c459
+        let bytes = "473ac065eb16c00480db000000000180b3c2d8202769360000c80a6333af3e010000908603849f4f00000000a8ed3232100000908603849f4fdf8091180001000000";
+        let hex = hex::decode(bytes).unwrap();
+        let parsed = crate::de::from_bytes::<Transaction>(&hex[..]).expect("invalid packed_trx");
+        let expected = Transaction {
+            actions: Vec::from([
+                Action {
+                    account: "atomicassets".into(),
+                    name: "burnasset".into(),
+                    authorization: Vec::from([Authorization {
+                        actor: "dyjsc.wam".into(),
+                        permission: "active".into()
+                    }]),
+                    data: hex::decode("0000908603849f4fdf80911800010000").expect("invalid data")
+                }
+            ]),
+            ctx_free_actions: vec![],
+            delay_sec: 0.into(),
+            max_net_usage_words: 0.into(),
+            expiration: u32::try_from(NaiveDateTime::parse_from_str(
+                "2024-02-05T01:30:47",
+                "%Y-%m-%dT%H:%M:%S"
+            ).expect("invalid date").timestamp()).expect("invalid date"),
+            ref_block_num: 5867,
+            ref_block_prefix: 3682600128,
+            max_cpu_usage_ms: 0.into()
+        };
+        assert_eq!(parsed, expected);
+    }
+
+    #[tokio::test]
+    async fn parses_two() {
+        // https://waxblock.io/transaction/ae97df8a828b188de43b8bc438fdfcae7f56cd7f141e56f5613f0c8e19930881
+        let bytes = "f73fc0654f2202fedc610000000001a0223297ba56a34a000000000095dde5010040371c4ceab29900000000a888cca5690040371c4ceab299067e0000000000000000000000e553bbe1582c010000000000000000005355bbe11f09000000000000000000a06555bbe1150200000000000000000020615dbbe1082700000000000000000020619d13d6102700000000000000000020618d12d600";
+        let hex = hex::decode(bytes).unwrap();
+        let parsed = crate::de::from_bytes::<Transaction>(&hex[..]).expect("invalid packed_trx");
+        let expected = Transaction {
+            actions: Vec::from([
+                Action {
+                    account: "delphioracle".into(),
+                    name: "write".into(),
+                    authorization: Vec::from([Authorization {
+                        actor: "nation.wax".into(),
+                        permission: "oracle".into()
+                    }]),
+                    data: hex::decode("0040371c4ceab299067e0000000000000000000000e553bbe1582c010000000000000000005355bbe11f09000000000000000000a06555bbe1150200000000000000000020615dbbe1082700000000000000000020619d13d6102700000000000000000020618d12d6").expect("invalid data")
+                }
+            ]),
+            ctx_free_actions: vec![],
+            delay_sec: 0.into(),
+            max_net_usage_words: 0.into(),
+            expiration: u32::try_from(NaiveDateTime::parse_from_str(
+                "2024-02-05T01:55:03",
+                "%Y-%m-%dT%H:%M:%S"
+            ).expect("invalid date").timestamp()).expect("invalid date"),
+            ref_block_num: 8783,
+            ref_block_prefix: 1641872898,
+            max_cpu_usage_ms: 0.into()
+        };
+        assert_eq!(parsed, expected);
+    }
+
+    #[tokio::test]
+    async fn parses_three() {
+        // https://waxblock.io/transaction/a3dd90c11783e70cd5bd0b9aac986a5e8c67b80cb05ede6e7a22ad4ac56c488a
+        let bytes = "52daa565893ccfa8f95f00000000010000000000ea30550040cbdaa86c52d501b0afc2ea02ea30550000000080ab26a767b0afc2ea02ea305500000000a8ed32320000000080ab26a7010000000200028e4e6048f274ee415656e775e14333d9d3ca7256a0a80a5e681cdd830fa6d63d01000003ced0396681caa06fec79fab1bbb1495cf818f2c711985cb826ce2f5291526dcb0100000000";
+        let hex = hex::decode(bytes).unwrap();
+        let parsed = crate::de::from_bytes::<Transaction>(&hex[..]).expect("invalid packed_trx");
+        let expected = Transaction {
+            actions: Vec::from([
+                Action {
+                    account: "eosio".into(),
+                    name: "updateauth".into(),
+                    authorization: Vec::from([Authorization {
+                        actor: "eosio.reserv".into(),
+                        permission: "owner".into()
+                    }]),
+                    data: hex::decode("b0afc2ea02ea305500000000a8ed32320000000080ab26a7010000000200028e4e6048f274ee415656e775e14333d9d3ca7256a0a80a5e681cdd830fa6d63d01000003ced0396681caa06fec79fab1bbb1495cf818f2c711985cb826ce2f5291526dcb01000000").expect("invalid data")
+                }
+            ]),
+            ctx_free_actions: vec![],
+            delay_sec: 0.into(),
+            max_net_usage_words: 0.into(),
+            expiration: u32::try_from(NaiveDateTime::parse_from_str(
+                "2024-01-16T01:22:26",
+                "%Y-%m-%dT%H:%M:%S"
+            ).expect("invalid date").timestamp()).expect("invalid date"),
+            ref_block_num: 15497,
+            ref_block_prefix: 1610197199,
+            max_cpu_usage_ms: 0.into()
+        };
+        assert_eq!(parsed, expected);
+    }
+
+    #[tokio::test]
+    async fn parses_four() {
+        // https://waxblock.io/transaction/833864af0b6c7a61d82ac8ddee6a408fb9912bff84260cf3ddcac8a39d38022c
+        let bytes = "f5ce1a5df6678f18c59200000000010000000000ea3055801d5653b1740d370100bae1003baca662801d5653b1740d372000003086035f065e00e9a435000000000857415800000000304737afde7871e200";
+        let hex = hex::decode(bytes).unwrap();
+        let parsed = crate::de::from_bytes::<Transaction>(&hex[..]).expect("invalid packed_trx");
+        let expected = Transaction {
+            actions: Vec::from([
+                Action {
+                    account: "eosio".into(),
+                    name: "awardgenesis".into(),
+                    authorization: Vec::from([Authorization {
+                        actor: "genesis.wax".into(),
+                        permission: "awardgenesis".into()
+                    }]),
+                    data: hex::decode("00003086035f065e00e9a435000000000857415800000000304737afde7871e2").expect("invalid data")
+                }
+            ]),
+            ctx_free_actions: vec![],
+            delay_sec: 0.into(),
+            max_net_usage_words: 0.into(),
+            expiration: u32::try_from(NaiveDateTime::parse_from_str(
+                "2019-07-02T03:26:45",
+                "%Y-%m-%dT%H:%M:%S"
+            ).expect("invalid date").timestamp()).expect("invalid date"),
+            ref_block_num: 26614,
+            ref_block_prefix: 2462390415,
+            max_cpu_usage_ms: 0.into()
+        };
+        assert_eq!(parsed, expected);
+    }
+
+    #[tokio::test]
+    async fn parses_five() {
+        // https://waxblock.io/transaction/72f351c0e39452070cb127c058c40ee5624335b1a6f4cdcf1ad5acbb12b73fa8
+        let bytes = "713c215dcdf8664ba7d400000000010000000000ea30557015d289deaa32dd0100003086035f065e00000000a8ed3232810200003086035f065e00000000000000001e90e8ad982ad3683410babbd94888683c405dcb4e6288683c206952ea2e41305570d5be0a23933055500f75eaaa56315510dd37f75077315500003057219de8ad00003857219de8ad00004057219de8ad00004857219de8ad00005057219de8ad00005857219de8ad00006057219de8ad00006857219de8ad00007057219de8ad00007857219de8ad00008057219de8ad00008857219de8ad00009057219de8ad00009857219de8ad0000a057219de8ad0000a857219de8ad0000b057219de8ad0000b857219de8ad0000c057219de8ad0000c857219de8ad0000d057219de8ad00118d472d83bae1c02e9d2a298ebbe100";
+        let hex = hex::decode(bytes).unwrap();
+        let parsed = crate::de::from_bytes::<Transaction>(&hex[..]).expect("invalid packed_trx");
+        let expected = Transaction {
+            actions: Vec::from([
+                Action {
+                    account: "eosio".into(),
+                    name: "voteproducer".into(),
+                    authorization: Vec::from([Authorization {
+                        actor: "fs35y.waa".into(),
+                        permission: "active".into()
+                    }]),
+                    data: hex::decode("00003086035f065e00000000000000001e90e8ad982ad3683410babbd94888683c405dcb4e6288683c206952ea2e41305570d5be0a23933055500f75eaaa56315510dd37f75077315500003057219de8ad00003857219de8ad00004057219de8ad00004857219de8ad00005057219de8ad00005857219de8ad00006057219de8ad00006857219de8ad00007057219de8ad00007857219de8ad00008057219de8ad00008857219de8ad00009057219de8ad00009857219de8ad0000a057219de8ad0000a857219de8ad0000b057219de8ad0000b857219de8ad0000c057219de8ad0000c857219de8ad0000d057219de8ad00118d472d83bae1c02e9d2a298ebbe1").expect("invalid data")
+                }
+            ]),
+            ctx_free_actions: vec![],
+            delay_sec: 0.into(),
+            max_net_usage_words: 0.into(),
+            expiration: u32::try_from(NaiveDateTime::parse_from_str(
+                "2019-07-07T00:27:29",
+                "%Y-%m-%dT%H:%M:%S"
+            ).expect("invalid date").timestamp()).expect("invalid date"),
+            ref_block_num: 63693,
+            ref_block_prefix: 3567733606,
+            max_cpu_usage_ms: 0.into()
+        };
+        assert_eq!(parsed, expected);
+    }
+
+    #[tokio::test]
+    async fn parses_six() {
+        // https://bloks.io/transaction/591efb9cbaa92f4879303a21cad6697acddd13215cc5c5cc9c2e84b6894435c0?tab=raw
+        let bytes = "8a2dc9645a47f284d584001400000250299d181be9d565000000000050299d0110955e181be9d565000000004ce63045000000735802ea305500000000008054570100e07411602ddd3400000000a8ed323218901c3dd9cc469f74000010556785d17100e07411602ddd3400";
+        let hex = hex::decode(bytes).unwrap();
+        let parsed = crate::de::from_bytes::<Transaction>(&hex[..]).expect("invalid packed_trx");
+        let expected = Transaction {
+            actions: Vec::from([
+                Action {
+                    account: "greymassnoop".into(),
+                    name: "noop".into(),
+                    authorization: Vec::from([Authorization {
+                        actor: "greymassfuel".into(),
+                        permission: "cosign".into()
+                    }]),
+                    data: hex::decode("").expect("invalid data")
+                },
+                Action {
+                    account: "eosio.msig".into(),
+                    name: "exec".into(),
+                    authorization: Vec::from([Authorization {
+                        actor: "animus.link".into(),
+                        permission: "active".into()
+                    }]),
+                    data: hex::decode("901c3dd9cc469f74000010556785d17100e07411602ddd34").expect("invalid data")
+                }
+            ]),
+            ctx_free_actions: vec![],
+            delay_sec: 0.into(),
+            max_net_usage_words: 0.into(),
+            expiration: u32::try_from(NaiveDateTime::parse_from_str(
+                "2023-08-01T16:06:34",
+                "%Y-%m-%dT%H:%M:%S"
+            ).expect("invalid date").timestamp()).expect("invalid date"),
+            ref_block_num: 18266,
+            ref_block_prefix: 2228585714,
+            max_cpu_usage_ms: 20.into()
+        };
+        assert_eq!(parsed, expected);
+    }
+
+    #[tokio::test]
+    async fn parses_seven() {
+        // https://bloks.io/transaction/daeec825bd7265b04b53588f98962401c53226a124cb5afb644d757539557a66?tab=raw
+        let bytes = "724d2864229a9c61aca2001400000250299d181be9d565000000000050299d0110955e181be9d565000000004ce63045000000735802ea3055000000000080545701901c3dd9cc469f7400000000a8ed32321880b574d3881cb5d900000000747a625c901c3dd9cc469f7400";
+        let hex = hex::decode(bytes).unwrap();
+        let parsed = crate::de::from_bytes::<Transaction>(&hex[..]).expect("invalid packed_trx");
+        let expected = Transaction {
+            actions: Vec::from([
+                Action {
+                    account: "greymassnoop".into(),
+                    name: "noop".into(),
+                    authorization: Vec::from([Authorization {
+                        actor: "greymassfuel".into(),
+                        permission: "cosign".into()
+                    }]),
+                    data: hex::decode("").expect("invalid data")
+                },
+                Action {
+                    account: "eosio.msig".into(),
+                    name: "exec".into(),
+                    authorization: Vec::from([Authorization {
+                        actor: "imjohnatboid".into(),
+                        permission: "active".into()
+                    }]),
+                    data: hex::decode("80b574d3881cb5d900000000747a625c901c3dd9cc469f74").expect("invalid data")
+                }
+            ]),
+            ctx_free_actions: vec![],
+            delay_sec: 0.into(),
+            max_net_usage_words: 0.into(),
+            expiration: u32::try_from(NaiveDateTime::parse_from_str(
+                "2023-04-01T15:27:46",
+                "%Y-%m-%dT%H:%M:%S"
+            ).expect("invalid date").timestamp()).expect("invalid date"),
+            ref_block_num: 39458,
+            ref_block_prefix: 2729206172,
+            max_cpu_usage_ms: 20.into()
+        };
+        assert_eq!(parsed, expected);
+    }
+
+    #[tokio::test]
+    async fn parses_eight() {
+        // https://bloks.io/transaction/6963aa99cf04313204a8a8dd62e3b407e9f307fcbdc5788a3eea125b5b73dcff?tab=raw
+        let bytes = "2d3ec065b72573cf29540008000001405dd557715a315500aabe8ad34ab33602405dd557715a3155000000a0eaab38ad405dd557715a3155000000005f052fe53060b0c6541195e97660b0c6541195e976406a190000000000b00b67af000000000d0200000000000004454f530000000000";
+        let hex = hex::decode(bytes).unwrap();
+        let parsed = crate::de::from_bytes::<Transaction>(&hex[..]).expect("invalid packed_trx");
+        let expected = Transaction {
+            actions: Vec::from([
+                Action {
+                    account: "eospowerupio".into(),
+                    name: "autopowerup".into(),
+                    authorization: Vec::from([
+                        Authorization {
+                            actor: "eospowerupio".into(),
+                            permission: "powerup".into()
+                        },
+                        Authorization {
+                            actor: "eospowerupio".into(),
+                            permission: "workers".into()
+                        }
+                    ]),
+                    data: hex::decode("60b0c6541195e97660b0c6541195e976406a190000000000b00b67af000000000d0200000000000004454f5300000000").expect("invalid data")
+                },
+            ]),
+            ctx_free_actions: vec![],
+            delay_sec: 0.into(),
+            max_net_usage_words: 0.into(),
+            expiration: u32::try_from(NaiveDateTime::parse_from_str(
+                "2024-02-05T01:47:25",
+                "%Y-%m-%dT%H:%M:%S"
+            ).expect("invalid date").timestamp()).expect("invalid date"),
+            ref_block_num: 9655,
+            ref_block_prefix: 1412026227,
+            max_cpu_usage_ms: 8.into()
+        };
+        assert_eq!(parsed, expected);
+    }
+
+    #[tokio::test]
+    async fn parses_nine() {
+        // https://bloks.io/transaction/ddd784909c76c6cee99a15098a00d4b7a0b04f00d12ab195dfefa5ff6b704d46
+        let bytes = "d86bac65588fdeee751700000000010000000000ea305500ae423ad15b99ba0180a9ba6a2a16b03600009ed4657355a54080a9ba6a2a16b0360002fcb16af4463bac99d019ff351166dd5ceec4da470455191228a621257148590d1368747470733a2f2f67656e6572656f732e696f240000";
+        let hex = hex::decode(bytes).unwrap();
+        let parsed = crate::de::from_bytes::<Transaction>(&hex[..]).expect("invalid packed_trx");
+        let expected = Transaction {
+            actions: Vec::from([
+                Action {
+                    account: "eosio".into(),
+                    name: "regproducer".into(),
+                    authorization: Vec::from([
+                        Authorization {
+                            actor: "aus1genereos".into(),
+                            permission: "operations".into()
+                        },
+                    ]),
+                    data: hex::decode("80a9ba6a2a16b0360002fcb16af4463bac99d019ff351166dd5ceec4da470455191228a621257148590d1368747470733a2f2f67656e6572656f732e696f2400").expect("invalid data")
+                },
+            ]),
+            ctx_free_actions: vec![],
+            delay_sec: 0.into(),
+            max_net_usage_words: 0.into(),
+            expiration: u32::try_from(NaiveDateTime::parse_from_str(
+                "2024-01-21T00:56:56",
+                "%Y-%m-%dT%H:%M:%S"
+            ).expect("invalid date").timestamp()).expect("invalid date"),
+            ref_block_num: 36696,
+            ref_block_prefix: 393604830,
+            max_cpu_usage_ms: 0.into()
+        };
+        assert_eq!(parsed, expected);
+    }
+
+    #[tokio::test]
+    async fn parses_ten() {
+        // https://bloks.io/transaction/efab4878f1ed6d020dc78ce2fbd1b2b3a59dd7a98846926765beb7f6c984e26d?tab=raw
+        let bytes = "2a92bd65accfd143aa9a00000000010000000000ea305580d3355c5de94c440180a9ba6a2a16b036000000e02ae94c440880a9ba6a2a16b03600";
+        let hex = hex::decode(bytes).unwrap();
+        let parsed = crate::de::from_bytes::<Transaction>(&hex[..]).expect("invalid packed_trx");
+        let expected = Transaction {
+            actions: Vec::from([
+                Action {
+                    account: "eosio".into(),
+                    name: "claimrewards".into(),
+                    authorization: Vec::from([
+                        Authorization {
+                            actor: "aus1genereos".into(),
+                            permission: "claimer".into()
+                        },
+                    ]),
+                    data: hex::decode("80a9ba6a2a16b036").expect("invalid data")
+                },
+            ]),
+            ctx_free_actions: vec![],
+            delay_sec: 0.into(),
+            max_net_usage_words: 0.into(),
+            expiration: u32::try_from(NaiveDateTime::parse_from_str(
+                "2024-02-03T01:08:58",
+                "%Y-%m-%dT%H:%M:%S"
+            ).expect("invalid date").timestamp()).expect("invalid date"),
+            ref_block_num: 53164,
+            ref_block_prefix: 2594849745,
+            max_cpu_usage_ms: 0.into()
+        };
+        assert_eq!(parsed, expected);
+    }
 }

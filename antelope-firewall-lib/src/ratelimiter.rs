@@ -196,7 +196,6 @@ impl RateLimiter {
                 .await;
             };
 
-            println!("{} {} {} {}", count_for_ip, current_count, last_count, ratio_elapsed);
             if (count_for_ip > rate_limit as f32) || current_count >= (2 * rate_limit) {
                 self.denied_counter.inc();
                 return false;
