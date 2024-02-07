@@ -5,6 +5,6 @@ use clap::Parser;
 #[command(author, version, about, long_about = None)]
 pub struct Args {
     /// Path to config file.
-    #[arg(short, long, default_value_t = String::from("/etc/antelope-firewall/antelope.toml"))]
+    #[arg(short, long, default_value_t = String::from("/etc/antelope-firewall/config.toml"))]
     pub config: String,
 }

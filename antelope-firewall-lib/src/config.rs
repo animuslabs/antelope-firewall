@@ -386,7 +386,7 @@ mod tests {
         let response = result.expect("Encountered error getting info");
         assert_eq!(response.status(), StatusCode::OK);
         let body = response.text().await.expect("Error while getting bytes");
-        let json_body = from_str::<serde_json::Value>(&body).expect("");
+        let json_body = from_str::<serde_json::Value>(&body).expect("response not json");
         if let Some(id) = json_body.as_object().and_then(|map| map.get("id").and_then(|o| o.as_str())) {
             assert_eq!(id, "0000006492871283c47f6ef57b00cf534628eb818c34deb87ea68a3557254c6b");
         } else {
