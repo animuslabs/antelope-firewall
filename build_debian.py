@@ -22,7 +22,7 @@ shutil.copyfile("target/release/antelope-firewall", path.join(build_base, "usr/b
 subprocess.run(["chmod", "+x", path.join(build_base, "usr/bin/antelope-firewall")])
 
 os.makedirs(path.join(build_base, "etc/antelope-firewall"), exist_ok=True)
-shutil.copyfile("config_main.toml", path.join(build_base, "etc/antelope-firewall/config.toml"))
+shutil.copyfile("default_config.toml", path.join(build_base, "etc/antelope-firewall/config.toml"))
 
 with open(path.join(build_base, "DEBIAN", "control"), "w") as f:
     f.write(f"""Package: antelope-firewall
@@ -30,7 +30,7 @@ Version: {version}-1
 Section: base
 Priority: optional
 Architecture: amd64
-Depends:
+Depends: openssl
 Maintainer: Matthew Jurenka <main@matthewjurenka.com>
 Description: Firewall and Rate Limiter and Load Balancer
  for Antelope blockchain RPCs. For more information:

@@ -145,7 +145,8 @@ pub async fn from_config(config: Config) -> Result<AntelopeFirewall, String> {
     // TODO: Add proper error handling
     if let Some(socket_str) = config.prometheus_address {
         let prometheus_address: SocketAddr = socket_str.parse().unwrap();
-        start_prometheus_exporter(prometheus_address);
+        start_prometheus_exporter(prometheus_address)
+            .map_err(|_| "Could not start prometheus exporter")?;
     }
 
     let socket_addr: SocketAddr = config.address.parse().unwrap();

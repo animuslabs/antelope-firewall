@@ -2,12 +2,15 @@ version: '3.8'
 services:
   antelope-firewall:
     build: 
-      context: .
+      context: . # this points to the local directory. 
+        # it's important to run docker compose build in the root of the antelope-firewall repository  
       dockerfile: Dockerfile
     environment:
-      - CONFIG_PATH=/etc/antelope-firewall/config_main.toml
+      - CONFIG_PATH=/etc/antelope-firewall/config.toml
+        # CONFIG_PATH will be passed to the firewall as the path to the config
     volumes:
-      - /home/antelopeio/antelope-firewall/config_main.toml:/etc/antelope-firewall/config_main.toml
+      - /home/antelopeio/antelope-firewall/config.toml:/etc/antelope-firewall/config.toml
+        # configuration file for the firewall mounted from where you cloned your repository
     ports:
-      - 3000:3000
-      - 3001:3001
+      - 3000:3000 # Default port of antelope-firewall. To change this, change this entry as well as default_config.toml
+      - 3001:3001 # Default port of prometheus exporter. To change this you must also change the entry in default_config.toml
