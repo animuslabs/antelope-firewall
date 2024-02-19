@@ -1,6 +1,6 @@
 // Parses config and returns a firewall
 
-use std::{collections::{HashSet, HashMap}, sync::Arc, net::SocketAddr};
+use std::{collections::{HashMap, HashSet}, hash::Hash, net::SocketAddr, sync::Arc};
 
 use chrono::Duration;
 use jsonpath::Selector;
@@ -260,21 +260,25 @@ pub async fn from_config(config: Config) -> Result<AntelopeFirewall, String> {
                     }
                 })),
                 RatelimitBucket::Table => Box::new(|(name, req, body, _)| Box::pin(async move {
-                    let unfiltered = match (
-                        req.uri == "/v1/chain/get_table_rows" || req.uri == "/v1/chain/get_table_by_scope",
-                        body.get("code")
-                    ) {
-                        (true, Some(serde_json::Value::String(code))) => HashSet::from([code.clone()]),
-                        _ => HashSet::new()
+                    let unfiltered = if req.uri == "/v1/chain/get_table_rows" || req.uri == "/v1/chain/get_table_by_scope" {
+                        let contract_opt = body.get("code").and_then(|val| val.as_str());
+                        let table_opt = body.get("table").and_then(|val| val.as_str());
+                        match (contract_opt, table_opt) {
+                            (Some(contract), Some(table)) => HashSet::from([format!("{}::{}", contract, table)]),
+                            _ => HashSet::new()
+                        }
+                    } else {
+                        HashSet::new()
                     };
                     let select_accounts_map = SELECT_ACCOUNTS.read().await;
-                    if let Some(select_accounts) = select_accounts_map.get(name.as_ref()) {
+                    let filtered = if let Some(select_accounts) = select_accounts_map.get(name.as_ref()) {
                         unfiltered.into_iter().filter(|account| {
                             select_accounts.contains(account)
                         }).collect::<HashSet<String>>()
                     } else {
                         unfiltered
-                    }
+                    };
+                    filtered.into_iter().map(|table| format!("{}::{}", req.ip.to_string(), table)).collect::<HashSet<String>>()
                 })),
             },
             Box::new(move |_| Box::pin(async move { ratelimit.limit })),
@@ -379,6 +383,7 @@ mod tests {
         });
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
+        // Chain id is correct from get_block_info
         let client = Client::new();
         let result = client.post("http://127.0.0.1:3000/v1/chain/get_block_info")
             .body("{\"block_num\":100}")
@@ -393,6 +398,49 @@ mod tests {
         } else {
             panic!("invalid body")
         }
+
+        // table ratelimit is applied successfully
+        for _ in 0..2 {
+            let client = Client::new();
+            let result = client.post("http://127.0.0.1:3000/v1/chain/get_table_rows")
+                .body("{\"scope\":\"mjurenka.ab\",\"code\":\"eosio.token\",\"table\":\"accounts\"}")
+                .send()
+                .await;
+            let response = result.expect("Encountered error getting table");
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = response.text().await.expect("Error while getting bytes");
+            let json_body = from_str::<serde_json::Value>(&body).expect("response not json");
+            if let Some(rows) = json_body.as_object().and_then(|map| map.get("rows").and_then(|o| o.as_array())) {
+                assert_eq!(rows.len(), 0);
+            } else {
+                panic!("invalid body")
+            }
+        }
+
+        let client = Client::new();
+        let result = client.post("http://127.0.0.1:3000/v1/chain/get_table_rows")
+            .body("{\"scope\":\"mjurenka.ab\",\"code\":\"eosio.token\",\"table\":\"accounts\"}")
+            .send()
+            .await;
+        let response = result.expect("Encountered error getting table");
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        // table ratelimit does not apply for out of scope table
+        let client = Client::new();
+        let result = client.post("http://127.0.0.1:3000/v1/chain/get_table_rows")
+            .body("{\"scope\":\"mjurenka.ab\",\"code\":\"eosio.token\",\"table\":\"stat\"}")
+            .send()
+            .await;
+        let response = result.expect("Encountered error getting table");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.text().await.expect("Error while getting bytes");
+        let json_body = from_str::<serde_json::Value>(&body).expect("response not json");
+        if let Some(rows) = json_body.as_object().and_then(|map| map.get("rows").and_then(|o| o.as_array())) {
+            assert_eq!(rows.len(), 0);
+        } else {
+            panic!("invalid body")
+        }
+        
     }
     
 }

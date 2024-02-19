@@ -79,9 +79,9 @@ name = "base"
 # a request is forwarded to and end node and comes back with an error http status
 limit_on = "failure"
 
-# bucket_type: "ip" or "contract" or "authorizer"
+# bucket_type: "ip", "contract", "authorizer", or "table"
 # Represents the ratelimit bucket. "ip" sets the bucket to be the request IP. "contract"
-# is for all accounts in an action list, and "authorizer" is for all accounts in an authorization
+# is for all accounts in an action list, "authorizer" is for all accounts in an authorization, and "table" is explained in the next section
 # list. For "contract" and "authorizer", the ratelimiter needs to pass for all accounts and all authorizers
 # in a transaction, not just the first one.
 bucket_type = "ip"
@@ -97,6 +97,48 @@ limit = 5
 # Duration of the window in seconds.
 window_duration = 60
 
+# For the above ratelimiter, because select_accounts is not specified it will apply for all accounts
+
+# OTHER POSSIBLE RATELIMITER EXAMPLES
+
+# #--------------------------------
+#
+# #The following is a config for a ratelimiter that only allows each IP 30
+# #table reads/min to the "accounts" table of eosio.token
+# [[ratelimit]]
+# name = "example_table_ratelimiter"
+# limit_on = "attempt"
+# bucket_type = "table"
+# limit = 30
+# window_duration = 60
+# 
+# #Note that select_accounts now has a different meaning and format,
+# #instead specifying the list of tables the rate limiter will be applied to.
+# #Tables are listed as "{contract name}::{table name}"
+# #If select_accounts is omitted, it will apply to all tables.
+# select_accounts = ["eosio.token::accounts"]
+#
+# #--------------------------------
+
+# #--------------------------------
+#
+# #Example of a ratelimiter that limits any given transaction authorizer to only
+# #be able to send a request if they have not had more than 2 failed transactions
+# #every 60 seconds.
+# [[ratelimit]]
+# name = "example_failure_ratelimiter"
+# limit_on = "attempt"
+# bucket_type = "authorizer"
+# limit = 1
+# window_duration = 60
+# # If select_accounts is specified, the ratelimiter will only apply for accounts
+# # in the list. If not specified, the ratelimiter will apply to all accounts.
+# select_accounts = []
+#
+# #--------------------------------
+
+
+# push_nodes
 # List of nodes that requests that mutate blockchain state can be forwarded to
 #
 # Requests to the following endpoints can be forwarded to nodes in this list:
@@ -123,6 +165,7 @@ url = "http://127.0.0.1:5000"
 weight = 1
 
 
+# get_nodes:
 # List of nodes that requests that only read blockchain state can be forwarded to
 #
 # Requests to the following endpoints can be forwarded to nodes in this list:

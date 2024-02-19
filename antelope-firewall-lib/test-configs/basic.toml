@@ -95,6 +95,15 @@ limit = 10
 window_duration = 60
 
 
+[[ratelimit]]
+name = "example_table_ratelimiter"
+limit_on = "attempt"
+bucket_type = "table"
+limit = 1
+window_duration = 3600
+select_accounts = ["eosio.token::accounts"]
+
+
 # Example of a ratelimiter that limits any given transaction authorizer to only
 # be able to send a request if they have not had more than 2 failed transactions
 # every 60 seconds.
