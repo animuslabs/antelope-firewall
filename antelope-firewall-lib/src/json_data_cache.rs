@@ -107,7 +107,7 @@ mod tests {
 
     #[tokio::test(start_paused=true)]
     async fn caches_value() {
-        let mut server = mockito::Server::new();
+        let mut server = mockito::Server::new_async().await;
         server.mock("GET", "/")
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -151,7 +151,7 @@ mod tests {
 
     #[tokio::test(start_paused=true)]
     async fn handles_uninitialized() {
-        let mut server = mockito::Server::new();
+        let mut server = mockito::Server::new_async().await;
         server.mock("GET", "/")
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -171,7 +171,7 @@ mod tests {
 
     #[tokio::test(start_paused=true)]
     async fn handles_server_error() {
-        let mut server = mockito::Server::new();
+        let mut server = mockito::Server::new_async().await;
         server.mock("GET", "/")
             .with_status(500)
             .create();
@@ -194,7 +194,7 @@ mod tests {
 
     #[tokio::test(start_paused=true)]
     async fn handles_invalid_json() {
-        let mut server = mockito::Server::new();
+        let mut server = mockito::Server::new_async().await;
         server.mock("GET", "/")
             .with_status(200)
             .with_header("content-type", "application/json")

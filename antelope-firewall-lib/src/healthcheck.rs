@@ -102,7 +102,7 @@ mod tests {
     async fn parses_response() {
         let current_time = chrono::Utc::now();
         
-        let mut server = mockito::Server::new();
+        let mut server = mockito::Server::new_async().await;
         server.mock("POST", "/v1/chain/get_info")
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -130,7 +130,7 @@ mod tests {
     async fn removes_before_grace_period() {
         let old_time = chrono::Utc::now().checked_sub_signed(Duration::seconds(3)).expect("Invalid time");
         
-        let mut server = mockito::Server::new();
+        let mut server = mockito::Server::new_async().await;
         server.mock("POST", "/v1/chain/get_info")
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -163,7 +163,7 @@ mod tests {
 
     #[tokio::test]
     async fn removes_invalid_json() {
-        let mut server = mockito::Server::new();
+        let mut server = mockito::Server::new_async().await;
         server.mock("POST", "/v1/chain/get_info")
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -194,7 +194,7 @@ mod tests {
     #[tokio::test]
     async fn removes_bad_format() {
         let old_time = chrono::Utc::now().checked_sub_signed(Duration::milliseconds(500)).expect("Invalid time");
-        let mut server = mockito::Server::new();
+        let mut server = mockito::Server::new_async().await;
         server.mock("POST", "/v1/chain/get_info")
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -230,7 +230,7 @@ mod tests {
         let old_time_one = chrono::Utc::now().checked_sub_signed(Duration::milliseconds(0)).expect("Invalid time");
         let old_time_two = chrono::Utc::now().checked_sub_signed(Duration::milliseconds(5000)).expect("Invalid time");
 
-        let mut server_one = mockito::Server::new();
+        let mut server_one = mockito::Server::new_async().await;
         server_one.mock("POST", "/v1/chain/get_info")
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -239,7 +239,7 @@ mod tests {
                 old_time_one.format("%Y-%m-%dT%H:%M:%S.%f")
             ))
             .create();
-        let mut server_two = mockito::Server::new();
+        let mut server_two = mockito::Server::new_async().await;
         server_two.mock("POST", "/v1/chain/get_info")
             .with_status(200)
             .with_header("content-type", "application/json")
